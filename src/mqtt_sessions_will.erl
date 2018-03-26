@@ -6,8 +6,10 @@
 
 -export([
     start_link/2,
-    connected/3,
+    connected/4,
+    reconnected/1,
     disconnected/3,
+    disconnected/1,
     set_user_context/2,
     stop/1
 ]).
@@ -26,6 +28,7 @@
     session_pid :: pid(),
     will :: map(),
     user_context :: term(),
+    session_expiry_interval :: non_neg_integer(),
     expiry_ref = undefined :: reference() | undefined,
     timer_ref = undefined,
     is_stopping :: boolean()
@@ -42,15 +45,22 @@ start_link(Pool, SessionPid) ->
 %% @todo Race condition: the will process might have stopped (and sent the will)
 %%       In the time the new connect is handled. If so the will process is now
 %%       killing the session, which will force the client to re-connect.
--spec connected(pid(), map() | undefined, term()) -> ok.
-connected(Pid, OptWill, UserContext) ->
-    gen_server:cast(Pid, {connected, OptWill, UserContext}).
+-spec connected(pid(), map() | undefined, non_neg_integer(), term()) -> ok.
+connected(Pid, Will, SessionExpiry, UserContext) ->
+    gen_server:cast(Pid, {connected, Will, SessionExpiry, UserContext}).
 
+-spec reconnected(pid()) -> ok.
+reconnected(Pid) ->
+    gen_server:cast(Pid, reconnected).
 
 %% @doc Signal the will process that the session got disconnected from the client.
 -spec disconnected(pid() | undefined, boolean(), pos_integer()) -> ok.
-disconnected(Pid, IsWill, DelayInterval) ->
-    gen_server:cast(Pid, {disconnected, IsWill, DelayInterval}).
+disconnected(Pid, IsWill, ExpiryInterval) ->
+    gen_server:cast(Pid, {disconnected, IsWill, ExpiryInterval}).
+
+-spec disconnected(pid()) -> ok.
+disconnected(Pid) ->
+    gen_server:cast(Pid, disconnected).
 
 
 %% @doc Set a new user context, needed after reauthentication
@@ -88,15 +98,26 @@ handle_call(stop, _From, State) ->
 handle_call(Msg, _From, State) ->
     {stop, {unknown_message, Msg}, State}.
 
-handle_cast({connected, undefined, undefined}, State) ->
+handle_cast({connected, undefined, SessionExpiry, UserContext}, State) ->
+    State1 = State#state{
+        user_context = UserContext,
+        session_expiry_interval = SessionExpiry
+    },
+    {noreply, stop_timer(State1)};
+handle_cast({connected, Will, SessionExpiry, UserContext}, State) ->
+    State1 = State#state{
+        will = Will,
+        user_context = UserContext,
+        session_expiry_interval = SessionExpiry
+    },
+    {noreply, stop_timer(State1)};
+handle_cast(reconnected, State) ->
     {noreply, stop_timer(State)};
-handle_cast({connected, undefined, UserContext}, State) ->
-    {noreply, stop_timer(State#state{ user_context = UserContext })};
-handle_cast({connected, Will, UserContext}, State) ->
-    {noreply, stop_timer(State#state{ will = Will, user_context = UserContext })};
 
-handle_cast({disconnected, IsWill, DelayInterval}, State) ->
-    {noreply, do_disconnected(State, IsWill, DelayInterval)};
+handle_cast({disconnected, IsWill, ExpiryInterval}, State) ->
+    {noreply, do_disconnected(State, IsWill, ExpiryInterval)};
+handle_cast(disconnected, State) ->
+    {noreply, do_disconnected(State, true, undefined)};
 
 handle_cast({user_context, UserContext}, State) ->
     {noreply, State#state{ user_context = UserContext }};
@@ -145,10 +166,12 @@ do_disconnected(State, false, DelayInterval) ->
 do_disconnected(State, true, undefined) ->
     do_disconnected(State, maps:get(delay_interval, State#state.will, 0));
 do_disconnected(State, true, DelayInterval) ->
-    do_disconnected(State, DelayInterval).
+    Delay = erlang:min(
+        DelayInterval,
+        maps:get(delay_interval, State#state.will, DelayInterval)),
+    do_disconnected(State, Delay).
 
 do_disconnected(State, DelayInterval) ->
-    %% todo: set a max on the expiry interval
     Ref = erlang:make_ref(),
     Timer = erlang:send_after(DelayInterval * 1000, self(), {expired, Ref}),
     State#state{ timer_ref = Timer, expiry_ref = Ref }.

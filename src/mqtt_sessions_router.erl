@@ -22,12 +22,32 @@
     terminate/2
     ]).
 
--type subscriber() :: {pid, pid(), SubscriberContext::term()}
-                    | {mfa, pid(), mfa()}
-                    | {mfa, pid(), mfa(), SubscriberContext::term()}.
+-type mqtt_msg() :: #{
+        pool => atom(),
+        topic => list( binary() ),
+        topic_bindings => list( proplists:property() ),
+        message => mqtt_packet_map:mqtt_message(),
+        publisher_context => term(),
+        subscriber_context => term(),
+        no_local => boolean(),
+        qos => 0 | 1 | 2,
+        retain_as_published => boolean(),
+        retain_handling => integer()
+    }.
+
+-type subscriber_options() :: #{
+        subscriber_context => term(),
+        no_local => boolean(),
+        qos => 0 | 1 | 2,
+        retain_as_published => boolean(),
+        retain_handling => integer()
+    }.
+
+-type subscriber() :: {pid() | mfa(), OwnerPid::pid(), subscriber_options()}.
 
 -export_type([
-    subscriber/0
+    subscriber/0,
+    mqtt_msg/0
 ]).
 
 -record(state, {
@@ -45,36 +65,49 @@ publish( Pool, Topic, Msg ) ->
     publish(Pool, Topic, Msg, undefined).
 
 -spec publish( atom(), list(), mqtt_packet_map:mqtt_message(), term() ) -> ok.
-publish( Pool, Topic, Msg, UserContext ) ->
+publish( Pool, Topic, Msg, PublisherContext ) ->
     Paths = router:route(Pool, Topic),
     lists:map(
         fun(#route{ bound_args = Bound, destination = Dest }) ->
-            MqttMsg = #mqtt_msg{
-                pool = Pool,
-                topic = Topic,
-                topic_bindings = Bound,
-                message = Msg,
-                publisher_context = UserContext
-            },
-            case Dest of
-                {mfa, _Pid, {io, format, A}, SCtx} ->
-                    erlang:apply(io, format, A ++ [ [ MqttMsg#mqtt_msg{ subscriber_context = SCtx } ] ]);
-                {mfa, _Pid, {M,F,A}, SCtx} ->
-                    erlang:apply(M, F, A ++ [ MqttMsg#mqtt_msg{ subscriber_context = SCtx } ]);
-                {pid, Pid, SCtx} ->
-                    Pid ! MqttMsg#mqtt_msg{ subscriber_context = SCtx }
+            case is_no_local(Dest, self()) of
+                true ->
+                    ok;
+                false ->
+                    {Callback, _OwnerPid, Options} = Dest,
+                    MqttMsg = Options#{
+                        pool => Pool,
+                        topic => Topic,
+                        topic_bindings => Bound,
+                        message => Msg,
+                        publisher_context => PublisherContext
+                    },
+                    case Callback of
+                        {{io, format, A}, _Opts} ->
+                            erlang:apply(io, format, A ++ [ [ MqttMsg ] ]);
+                        {mfa, _Pid, {M,F,A}, _Opts} ->
+                            erlang:apply(M, F, A ++ [ MqttMsg ]);
+                        {pid, Pid, _Opts} ->
+                            Pid ! {mqtt_msg, MqttMsg}
+                    end
             end
         end,
         Paths),
     ok.
 
+is_no_local({_Callback, OwnerPid, #{ no_local := true }}, OwnerPid) -> true;
+is_no_local(_Destination, _Pid) -> false.
+
+
 -spec subscribe( atom(), list(), subscriber() ) -> ok | {error, invalid_subscriber}.
-subscribe( Pool, Topic, {mfa, Pid, MFA}) ->
-    subscribe( Pool, Topic, {mfa, Pid, MFA, undefined});
-subscribe( Pool, TopicFilter, Subscriber ) ->
+subscribe( Pool, Topic, {_, _, _} = MFA) ->
+    subscribe( Pool, Topic, MFA, self(), #{});
+subscribe( Pool, Topic, Pid) when is_pid(Pid) ->
+    subscribe( Pool, Topic, Pid, Pid, #{}).
+
+subscribe( Pool, TopicFilter, Subscriber, OwnerPid, Options ) when is_pid(OwnerPid), is_map(Options) ->
     case is_valid_subscriber(Subscriber) of
         true ->
-            gen_server:call(name(Pool), {subscribe, TopicFilter, Subscriber}, infinity);
+            gen_server:call(name(Pool), {subscribe, TopicFilter, Subscriber, OwnerPid, Options}, infinity);
         false ->
             {error, invalid_subscriber}
     end.
@@ -89,8 +122,8 @@ start_link( Pool ) ->
     gen_server:start_link({local, name(Pool)}, ?MODULE, [Pool], []).
 
 
-is_valid_subscriber({mfa, Pid, {M, F, A}, _SCtx}) when is_list(A), is_atom(M), is_atom(F), is_pid(Pid) -> true;
-is_valid_subscriber({pid, Pid, _SCtx}) when is_pid(Pid) -> true;
+is_valid_subscriber({M, F, A}) when is_atom(M), is_atom(F), is_list(A) -> true;
+is_valid_subscriber(Pid) when is_pid(Pid) -> true;
 is_valid_subscriber(_) -> false.
 
 
@@ -106,9 +139,8 @@ init([ Pool ]) ->
         monitors = #{}
     }}.
 
-handle_call({subscribe, TopicFilter, Subscriber}, _From,
+handle_call({subscribe, TopicFilter, Subscriber, OwnerPid, Options}, _From,
             #state{ router = Router, monitors = Monitors } = State) ->
-    OwnerPid = subscriber_pid(Subscriber),
     Current = maps:get(OwnerPid, Monitors, []),
     Current1 = case lists:keysearch(TopicFilter, 1, Current) of
         {value, {_Filter, PrevSubscriber}} ->
@@ -117,21 +149,22 @@ handle_call({subscribe, TopicFilter, Subscriber}, _From,
         false ->
             Current
     end,
-    ok = router:add(Router, TopicFilter, Subscriber),
+    Destination = {Subscriber, OwnerPid, Options},
+    ok = router:add(Router, TopicFilter, Destination),
     case maps:is_key(OwnerPid, Monitors) of
         false -> erlang:monitor(process, OwnerPid);
         true -> ok
     end,
     Monitors1 = Monitors#{
-        OwnerPid => [ {TopicFilter, Subscriber} | Current1
+        OwnerPid => [ {TopicFilter, Destination} | Current1
     ]},
     {reply, ok, State#state{ monitors = Monitors1 }};
 handle_call({unsubscribe, TopicFilter, Pid}, _From,
             #state{ router = Router, monitors = Monitors } = State) ->
     Subs = maps:get(Pid, Monitors, []),
     case lists:keysearch(TopicFilter, 1, Subs) of
-        {value, {_Filter, Subscriber}} ->
-            router:remove_path(Router, TopicFilter, Subscriber),
+        {value, {_Filter, Destination}} ->
+            router:remove_path(Router, TopicFilter, Destination),
             Subs1 = lists:keydelete(TopicFilter, 1, Subs),
             Monitors1 = Monitors#{ Pid => Subs1 },
             {reply, ok, State#state{ monitors = Monitors1 }};
@@ -167,9 +200,6 @@ remove_subscriber(Pid, #state{ router = Router, monitors = Monitors } = State) -
         end,
         maps:get(Pid, Monitors, [])),
     State#state{ monitors = maps:remove(Pid, Monitors) }.
-
-subscriber_pid({mfa, Pid, _MFA, _SCtx}) -> Pid;
-subscriber_pid({pid, Pid, _SCtx}) -> Pid.
 
 
 -spec name( atom() ) -> atom().

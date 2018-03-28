@@ -87,7 +87,8 @@ init([ Pool, SessionPid ]) ->
         pool = Pool,
         session_pid = SessionPid,
         will = #{},
-        is_stopping = false
+        is_stopping = false,
+        session_expiry_interval = 0
     },
     State1 = do_disconnected(State, ?CONNECT_EXPIRY_INTERVAL),
     {ok, State1}.
@@ -101,7 +102,10 @@ handle_call(Msg, _From, State) ->
 handle_cast({connected, undefined, SessionExpiry, UserContext}, State) ->
     State1 = State#state{
         user_context = UserContext,
-        session_expiry_interval = SessionExpiry
+        session_expiry_interval = case SessionExpiry of
+            undefined -> 0;
+            _ -> SessionExpiry
+        end
     },
     {noreply, stop_timer(State1)};
 handle_cast({connected, Will, SessionExpiry, UserContext}, State) ->
@@ -157,14 +161,11 @@ terminate(_Reason, _State) ->
 
 %% @doc Handle a disconnect of the MQTT connection, if not reconnected within the delay interval
 %%      then we kill the connection process and the will is published.
-do_disconnected(State, false, undefined) ->
-    State1 = State#state{ will = #{} },
-    do_disconnected(State1, maps:get(delay_interval, State#state.will, 0));
+do_disconnected(State, IsWill, undefined) ->
+    do_disconnected(State, IsWill, State#state.session_expiry_interval);
 do_disconnected(State, false, DelayInterval) ->
     State1 = State#state{ will = #{} },
     do_disconnected(State1, DelayInterval);
-do_disconnected(State, true, undefined) ->
-    do_disconnected(State, maps:get(delay_interval, State#state.will, 0));
 do_disconnected(State, true, DelayInterval) ->
     Delay = erlang:min(
         DelayInterval,
@@ -185,12 +186,15 @@ stop_timer(#state{ timer_ref = TRef } = State) ->
 %% @doc Publish the will message. A will is published if the connection process crashes or if
 %%      it is has been disconnected for a too long time.
 do_publish_will(#state{ is_stopping = true }) ->
+    lager:info("do_publish_will: is_stopping"),
     ok;
 do_publish_will(#state{ pool = Pool, will = #{ topic := Topic, payload := Payload } = Will, user_context = UserContext }) ->
+    lager:info("do_publish_will: ~p", [Will]),
     Retain = maps:get(retain, Will, false),
     QoS = maps:get(qos, Will, 0),
     Props = maps:get(properties, Will, #{}),
     router:publish(Pool, Topic, Payload, #{ qos => QoS, retain => Retain, properties => Props }, UserContext);
 do_publish_will(#state{}) ->
+    lager:info("do_publish_will: (none)"),
     ok.
 

@@ -2,12 +2,7 @@
 %%      A single session can have multiple transports attached.
 
 %% TODO: Limit in-flight acks (both ways)
-%% TODO: Test publish/subscribe with ws connection
-%% TODO: On disconnect: cleanup pending messages
-%% TODO: On connect: resent unacked publish and pubrel messages
 %% TODO: Drop QoS 0 messages if pending gets too large
-%% TODO: Test keep-alive timeout
-%% TODO: Test will
 
 -module(mqtt_sessions_process).
 
@@ -112,6 +107,7 @@ init([ Pool, ClientId ]) ->
     mqtt_sessions_registry:register(Pool, ClientId, self()),
     {ok, WillPid} = mqtt_sessions_will_sup:start(Pool, self()),
     {ok, Runtime} = application:get_env(mqtt_sessions, runtime),
+    erlang:monitor(process, WillPid),
     {ok, #state{
         pool = Pool,
         runtime = Runtime,
@@ -156,29 +152,12 @@ handle_cast(kill, State) ->
     {stop, shutdown, State}.
 
 
-handle_info({mqtt_msg, #{ type := publish, topic := Topic, message := Msg } = MqttMsg},
-            #state{ runtime = Runtime, user_context = UCtx } = State) ->
-    io:format("RECEIVED MESSAGE ~p", [Msg]),
-    % Check if we are allowed to see this topic
-    % TODO: this can be removed, because this is a filter for retained messages
-    %       as other subscriptions are checked on the moment we subscribe
-    case Runtime:is_allowed(publish, Topic, Msg, UCtx) of
-        true ->
-            Msg1 = case maps:get(retain_as_published, MqttMsg, false) of
-                false -> Msg#{ retain => false };
-                true -> Msg
-            end,
-            QoS = erlang:min( maps:get(qos, Msg1, 0), maps:get(qos, MqttMsg, 0) ),
-            Msg2 = Msg1#{
-                qos => QoS,
-                dup => false
-            },
-            {noreply, queue(Msg2, State)};
-        false ->
-            {noreply, State}
-    end;
+handle_info({mqtt_msg, #{ type := publish } = MqttMsg}, State) ->
+    State1 = relay_publish(MqttMsg, State),
+    {noreply, State1};
 
 handle_info({keep_alive, Pid}, #state{ keep_alive_counter = 0, transport = Pid } = State) ->
+    lager:debug("MQTT past keep_alive, disconnecting ~p", [Pid]),
     Pid ! {reply, disconnect},
     {noreply, State};
 handle_info({keep_alive, Pid}, #state{ keep_alive_counter = N, transport = Pid } = State) ->
@@ -190,6 +169,12 @@ handle_info({keep_alive, _Pid}, State) ->
 handle_info({'DOWN', _Mref, process, Pid, _Reason}, #state{ transport = Pid } = State) ->
     State1 = do_disconnected(State),
     {noreply, State1};
+handle_info({'DOWN', _Mref, process, Pid, _Reason}, #state{ will_pid = Pid } = State) ->
+    send_transport(#{
+        type => disconnect,
+        reason_code => ?MQTT_RC_ERROR
+    }, State),
+    {stop, shutdown, State};
 handle_info({'DOWN', _Mref, process, _Pid, _Reason}, State) ->
     {noreply, State};
 
@@ -246,6 +231,9 @@ handle_incoming(#{ type := puback } = Msg, Options, State) ->
 
 handle_incoming(#{ type := subscribe } = Msg, Options, State) ->
     subscribe(Msg, Options, State);
+handle_incoming(#{ type := unsubscribe } = Msg, Options, State) ->
+    unsubscribe(Msg, Options, State);
+
 handle_incoming(#{ type := pingreq }, Options, State) ->
     State1 = reply(#{ type => pingresp }, Options, State),
     {ok, State1};
@@ -255,6 +243,9 @@ handle_incoming(#{ type := disconnect } = Msg, Options, State) ->
     disconnect(Msg, Options, State).
 
 
+% ---------------------------------------------------------------------------------------
+% --------------------------- message type functions ------------------------------------
+% ---------------------------------------------------------------------------------------
 
 
 %% @doc Handle the connect message. Either this is a re-connect or the first connect.
@@ -300,7 +291,8 @@ connect_auth(Msg, Options, #state{ runtime = Runtime, is_connected = IsConnected
                         is_session_present = true,
                         will = undefined
                     },
-                    {ok, State3};
+                    State4 = resendUnacknowledged( cleanupPending(State3) ),
+                    {ok, State4};
                 _ ->
                     State3 = State2#state{
                         is_connected = false
@@ -326,7 +318,7 @@ publish(#{ topic := Topic, qos := 0 } = Msg, _Options,
         #state{ runtime = Runtime, user_context = UCtx } = State) ->
     case Runtime:is_allowed(publish, Topic, Msg, UCtx) of
         true ->
-            MsgPub = Msg#{ dup => false },
+            MsgPub = mqtt_sessions_payload:decode(Msg#{ dup => false }),
             ok = mqtt_sessions_router:publish(State#state.pool, Topic, MsgPub, UCtx);
         false ->
             ok
@@ -336,6 +328,7 @@ publish(#{ topic := Topic, qos := 1, dup := Dup, packet_id := PacketId } = Msg, 
         #state{ runtime = Runtime, user_context = UCtx, awaiting_rel = WaitRel } = State) ->
     case maps:find(PacketId, WaitRel) of
         {ok, _} when not Dup ->
+            % There is a qos 2 level message with the same packet id
             PubAck = #{
                 type => puback,
                 packet_id => PacketId,
@@ -343,6 +336,8 @@ publish(#{ topic := Topic, qos := 1, dup := Dup, packet_id := PacketId } = Msg, 
             },
             reply(PubAck, Options, State);
         {ok, {pubrel, RC, _}} when Dup ->
+            % There is a qos 2 level message with the same packet id
+            % But the received mesage is a duplicate, just ack.
             PubAck = #{
                 type => puback,
                 packet_id => PacketId,
@@ -352,7 +347,7 @@ publish(#{ topic := Topic, qos := 1, dup := Dup, packet_id := PacketId } = Msg, 
         error ->
             RC = case Runtime:is_allowed(publish, Topic, Msg, UCtx) of
                 true ->
-                    MsgPub = Msg#{ dup => false },
+                    MsgPub = mqtt_sessions_payload:decode(Msg#{ dup => false }),
                     ok = mqtt_sessions_router:publish(State#state.pool, Topic, MsgPub, UCtx),
                     ?MQTT_RC_SUCCESS;
                 false ->
@@ -387,7 +382,7 @@ publish(#{ topic := Topic, qos := 2, dup := Dup, packet_id := PacketId } = Msg, 
         error ->
             RC = case Runtime:is_allowed(publish, Topic, Msg, UCtx) of
                 true ->
-                    MsgPub = Msg#{ dup => false },
+                    MsgPub = mqtt_sessions_payload:decode(Msg#{ dup => false }),
                     ok = mqtt_sessions_router:publish(State#state.pool, Topic, MsgPub, UCtx),
                     ?MQTT_RC_SUCCESS;
                 false ->
@@ -466,7 +461,7 @@ pubrec(#{ packet_id := PacketId, reason_code := RC }, _Options, #state{ awaiting
             WaitAck
     end,
     {ok, State#state{ awaiting_ack = WaitAck1 }};
-pubrec(#{ packet_id := PacketId }, _Options, #state{ awaiting_ack = WaitAck } = State) ->
+pubrec(#{ packet_id := PacketId }, Options, #state{ awaiting_ack = WaitAck } = State) ->
     {WaitAck1, RC} = case maps:find(PacketId, WaitAck) of
         {ok, {MsgNr, pubrec, _Msg}} ->
             {WaitAck#{ PacketId => {MsgNr, pubcomp, undefined} }, ?MQTT_RC_SUCCESS};
@@ -485,7 +480,7 @@ pubrec(#{ packet_id := PacketId }, _Options, #state{ awaiting_ack = WaitAck } = 
         packet_id => PacketId,
         reason_code => RC
     },
-    {ok, queue(PubRel, State1)}.
+    {ok, reply(PubRel, Options, State1)}.
 
 %% @doc Handle pubcomp for QoS 2 publish messages sent to the client
 pubcomp(#{ packet_id := PacketId }, _Options, #state{ awaiting_ack = WaitAck } = State) ->
@@ -504,14 +499,14 @@ pubcomp(#{ packet_id := PacketId }, _Options, #state{ awaiting_ack = WaitAck } =
 
 %% @doc Handle a subscribe request
 subscribe(#{ topics := Topics } = Msg, Options, #state{ runtime = Runtime } = State) ->
-    % TODO: check if packet_id is unused (protocol error)
     Resp = lists:map(
         fun(#{ topic := TopicFilter } = Sub) ->
             case Runtime:is_allowed(subscribe, TopicFilter, Msg, State#state.user_context) of
                 true ->
                     QoS = maps:get(qos, Sub, 0),
                     SubOptions = Sub#{
-                        qos => QoS
+                        qos => QoS,
+                        no_local => maps:get(no_local, Sub, false)
                     },
                     SubOptions1 = maps:remove(topic, SubOptions),
                     case mqtt_sessions_router:subscribe(State#state.pool, TopicFilter, self(), self(), SubOptions1) of
@@ -531,11 +526,123 @@ subscribe(#{ topics := Topics } = Msg, Options, #state{ runtime = Runtime } = St
     State1 = reply(SubAck, Options, State),
     {ok, State1}.
 
+%% @doc Handle the unsubscribe request
+unsubscribe(#{ topics := Topics } = Msg, Options, State) ->
+    Resp = lists:map(
+        fun(TopicFilter) ->
+            case mqtt_sessions_router:unsubscribe(State#state.pool, TopicFilter, self()) of
+                ok -> {ok, found};
+                {error, notfound} -> {ok, notfound}
+            end
+        end,
+        Topics),
+    UnsubAck = #{
+        type => unsuback,
+        packet_id => maps:get(packet_id, Msg, 0),
+        acks => Resp
+    },
+    State1 = reply(UnsubAck, Options, State),
+    {ok, State1}.
+
 
 %% @doc Handle a disconnect from the client.
 disconnect(#{ reason_code := RC, properties := Props }, _Options, State) ->
     ExpiryInterval = maps:get(session_expiry_interval, Props, State#state.session_expiry_interval),
     {ok, will_disconnected(RC =/= ?MQTT_RC_SUCCESS, ExpiryInterval, State)}.
+
+
+
+% ---------------------------------------------------------------------------------------
+% --------------------------- relay publish to client -----------------------------------
+% ---------------------------------------------------------------------------------------
+
+
+relay_publish(#{ type := publish, topic := Topic, message := Msg } = MqttMsg,
+              #state{ runtime = Runtime, user_context = UCtx } = State) ->
+    io:format("~nRECEIVED MESSAGE (~p) ~p~n", [ State#state.client_id,Msg]),
+    % Check if we are allowed to see this topic
+    % TODO: this can be removed, because this is a filter for retained messages
+    %       as other subscriptions are checked on the moment we subscribe
+    case Runtime:is_allowed(publish, Topic, Msg, UCtx) of
+        true ->
+            Msg1 = case maps:get(retain_as_published, MqttMsg, false) of
+                false -> Msg#{ retain => false };
+                true -> Msg
+            end,
+            QoS = erlang:min( maps:get(qos, Msg1, 0), maps:get(qos, MqttMsg, 0) ),
+            Msg2 = mqtt_sessions_payload:encode(Msg1#{
+                qos => QoS,
+                dup => false
+            }),
+            {StateN, MsgN} = case QoS of
+                0 ->
+                    {State, Msg2#{ packet_id => 0 }};
+                _ ->
+                    State1 = #state{ packet_id = PacketId } = inc_packet_id(State),
+                    State2 = #state{ msg_nr = MsgNr } = inc_msg_nr(State1),
+                    AckRec = case QoS of
+                        1 -> puback;
+                        2 -> pubrec
+                    end,
+                    Msg3 = Msg2#{
+                        packet_id => PacketId
+                    },
+                    State3 = State2#state{
+                        awaiting_ack = (State2#state.awaiting_ack)#{ PacketId => {MsgNr, AckRec, Msg3} }
+                    },
+                    {State3, Msg3}
+            end,
+            reply(MsgN, [], StateN);
+        false ->
+            State
+    end.
+
+
+% ---------------------------------------------------------------------------------------
+% ------------------------------- queue functions ---------------------------------------
+% ---------------------------------------------------------------------------------------
+
+cleanupPending(#state{ pending = Pending } = State) ->
+    L1 = lists:filter(
+            fun
+                (#{ type := publish, qos := 0 }) -> true;
+                (_) -> false
+            end,
+            queue:to_list(Pending)),
+    State#state{ pending = queue:from_list(L1) }.
+
+resendUnacknowledged(#state{ awaiting_ack = AwaitAck } = State) ->
+    Msgs = maps:fold(
+        fun
+            (_PacketId, {MsgNr, pubrec, Msg}, Acc) ->
+                [ {MsgNr, Msg#{ dup => true }} | Acc ];
+            (PacketId, {MsgNr, pubcomp, _Msg}, Acc) ->
+                PubComp = #{
+                    type => pubrec,
+                    packet_id => PacketId
+                },
+                [ {MsgNr, PubComp} | Acc ];
+            (_PacketId, {MsgNr, suback, Msg}, Acc) ->
+                [ {MsgNr, Msg} | Acc ];
+            (_PacketId, {MsgNr, unsuback, Msg}, Acc) ->
+                [ {MsgNr, Msg} | Acc ];
+            (_PacketId, _, Acc) ->
+                Acc
+        end,
+        [],
+        AwaitAck),
+    lists:foldl(
+        fun({_Nr, Msg}, StateAcc) ->
+            reply(Msg, [], StateAcc)
+        end,
+        State,
+        lists:sort(Msgs)).
+
+
+% ---------------------------------------------------------------------------------------
+% -------------------------------- misc functions ---------------------------------------
+% ---------------------------------------------------------------------------------------
+
 
 %% @doc Signal the will-watchdog that the session is disconnected. It will start
 %%      a timer for automatic expiry of this session process.
@@ -551,11 +658,12 @@ do_disconnected(#state{ will_pid = WillPid } = State) ->
 
 %% @todo Cleanup pending messages and awaiting states.
 cleanup_state_disconnected(State) ->
-    {ok, State#state{
+    cleanupPending(State#state{
         pending_connack = undefined,
         is_connected = false,
-        transport = undefined
-    }}.
+        transport = undefined,
+        awaiting_rel = {}
+    }).
 
 
 %% @doc Send a connack to the remote, ping the will-watchdog that we connected
@@ -597,7 +705,7 @@ reply(undefined, State) ->
 reply(Msg, #state{ transport = undefined } = State) ->
     queue(Msg, State);
 reply(Msg, #state{ transport = Transport } = State) ->
-    io:format("REPLY: ~p~n~n", [Msg]),
+    io:format("~nREPLY: ~p~n~n", [Msg]),
     Transport ! {reply, encode(Msg)},
     State.
 
@@ -611,22 +719,6 @@ queue(#{ type := connack } = Msg, State) ->
     State#state{ pending_connack = Msg };
 queue(#{ type := auth } = Msg, State) ->
     State#state{ pending_connack = Msg };
-queue(#{ type := publish, qos := QoS } = Msg, #state{ awaiting_ack = Ack } = State) when QoS > 0 ->
-    State1 = #state{ packet_id = PacketId } = inc_packet_id(State),
-    State2 = #state{ msg_nr = MsgNr } = inc_msg_nr(State1),
-    AckRec = case QoS of
-        1 -> puback;
-        2 -> pubrec
-    end,
-    Msg1 = Msg#{
-        packet_id => PacketId
-    },
-    State3 = State2#state{
-        awaiting_ack = Ack#{ PacketId => {MsgNr, AckRec, Msg1} }
-    },
-    queue_1(Msg1, State3);
-queue(#{ type := publish, qos := 0 } = Msg, State) ->
-    queue_1(Msg#{ packet_id => 0 }, inc_msg_nr(State));
 queue(Msg, State) ->
     queue_1(Msg, inc_msg_nr(State)).
 
@@ -689,13 +781,12 @@ inc_msg_nr(#state{ msg_nr = Nr } = State) ->
 
 %% @doc Fetch a packet id that is not yet used.
 inc_packet_id(#state{ packet_id = PacketId, awaiting_ack = Acks } = State) ->
-    case maps:is_key(PacketId, Acks) of
-        true ->
-            PacketId1 = case PacketId >= ?MAX_PACKET_ID of
-                true -> 1;
-                false -> PacketId + 1
-            end,
-            inc_packet_id(State#state{ packet_id = PacketId1 });
-        false ->
-            State
+    PacketId1 = case PacketId >= ?MAX_PACKET_ID of
+        true -> 1;
+        false -> PacketId + 1
+    end,
+    State1 = State#state{ packet_id = PacketId1 },
+    case maps:is_key(PacketId1, Acks) of
+        true -> inc_packet_id(State1);
+        false -> State1
     end.

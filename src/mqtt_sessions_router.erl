@@ -8,6 +8,7 @@
     publish/3,
     publish/4,
     subscribe/3,
+    subscribe/5,
     unsubscribe/3,
     start_link/1,
     name/1
@@ -75,6 +76,7 @@ publish( Pool, Topic, Msg, PublisherContext ) ->
                 false ->
                     {Callback, _OwnerPid, Options} = Dest,
                     MqttMsg = Options#{
+                        type => publish,
                         pool => Pool,
                         topic => Topic,
                         topic_bindings => Bound,
@@ -82,11 +84,11 @@ publish( Pool, Topic, Msg, PublisherContext ) ->
                         publisher_context => PublisherContext
                     },
                     case Callback of
-                        {{io, format, A}, _Opts} ->
+                        {io, format, A} ->
                             erlang:apply(io, format, A ++ [ [ MqttMsg ] ]);
-                        {mfa, _Pid, {M,F,A}, _Opts} ->
+                        {M,F,A} ->
                             erlang:apply(M, F, A ++ [ MqttMsg ]);
-                        {pid, Pid, _Opts} ->
+                        Pid when is_pid(Pid) ->
                             Pid ! {mqtt_msg, MqttMsg}
                     end
             end
@@ -144,7 +146,7 @@ handle_call({subscribe, TopicFilter, Subscriber, OwnerPid, Options}, _From,
     Current = maps:get(OwnerPid, Monitors, []),
     Current1 = case lists:keysearch(TopicFilter, 1, Current) of
         {value, {_Filter, PrevSubscriber}} ->
-            router:remove(Router, TopicFilter, PrevSubscriber),
+            router:remove_path(Router, TopicFilter, PrevSubscriber),
             lists:keydelete(TopicFilter, 1, Current);
         false ->
             Current
@@ -196,7 +198,7 @@ terminate(_Reason, _State) ->
 remove_subscriber(Pid, #state{ router = Router, monitors = Monitors } = State) ->
     lists:foreach(
         fun({TopicFilter, Subscriber}) ->
-            router:remove(Router, TopicFilter, Subscriber)
+            router:remove_path(Router, TopicFilter, Subscriber)
         end,
         maps:get(Pid, Monitors, [])),
     State#state{ monitors = maps:remove(Pid, Monitors) }.

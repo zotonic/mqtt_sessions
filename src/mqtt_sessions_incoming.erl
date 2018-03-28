@@ -30,8 +30,7 @@ incoming_message(Pool, undefined, #{ type := connect, client_id := ClientId, cle
             ok = mqtt_sessions_process:incoming_message(SessionRef, Msg, Options),
             {ok, SessionRef};
         {error, _} = Error ->
-            maybe_send_connack(Options),
-            Error
+            maybe_send_connack(Options, Error)
     end;
 incoming_message(Pool, undefined, Msg, _Options) ->
     lager:error("MQTT msg for unknown session in ~p: ~p", [ Pool, Msg ]),
@@ -42,7 +41,6 @@ incoming_message(Pool, ClientId, Msg, Options) when is_binary(ClientId) ->
             ok = mqtt_sessions_process:incoming_message(SessionRef, Msg, Options),
             {ok, SessionRef};
         {error, _} = Error ->
-            maybe_send_connack(Options),
             Error
     end;
 incoming_message(_Pool, SessionRef, Msg, Options) when is_pid(SessionRef) ->
@@ -51,11 +49,16 @@ incoming_message(_Pool, SessionRef, Msg, Options) when is_pid(SessionRef) ->
 
 %% @doc Refuse unknown client-ids, as we want to have full control over the client identifiers.
 %%      This is not according to the specs, but we do it out of security concerns.
-maybe_send_connack(Options) ->
+maybe_send_connack(Options, Error) ->
     case proplists:get_value(transport, Options) of
         undefined ->
-            ok;
+            Error;
         Pid when is_pid(Pid) ->
-            Pid ! {reply, #{ type => connack, reason_code => ?MQTT_RC_CLIENT_ID_INVALID }}
+            Pid ! {reply, #{ type => connack, reason_code => ?MQTT_RC_CLIENT_ID_INVALID }},
+            Pid ! {reply, disconnect},
+            case self() of
+                Pid -> {ok, undefined};
+                _ -> Error
+            end
     end.
 

@@ -10,10 +10,24 @@
 
 -export([
     runtime/0,
+
     find_session/1,
     find_session/2,
     fetch_queue/1,
     fetch_queue/2,
+
+    publish/2,
+    publish/3,
+    publish/4,
+    publish/5,
+    subscribe/2,
+    subscribe/3,
+    subscribe/4,
+    subscribe/6,
+    unsubscribe/1,
+    unsubscribe/2,
+    unsubscribe/3,
+
     incoming_message/3,
     incoming_message/4,
     connect_transport/2,
@@ -31,13 +45,16 @@
 -type subscriber() :: mqtt_sessions_router:subscriber().
 -type subscriber_options() :: mqtt_sessions_router:subscriber_options().
 
+-type topic() :: list(binary()) | binary().
+
 -export_type([
     session_ref/0,
     msg_options/0,
     msg_option/0,
     mqtt_msg/0,
     subscriber/0,
-    subscriber_options/0
+    subscriber_options/0,
+    topic/0
 ]).
 
 -include("../include/mqtt_sessions.hrl").
@@ -78,6 +95,85 @@ fetch_queue( Pool, ClientId ) ->
         {ok, Pid} -> mqtt_sessions_process:fetch_queue(Pid);
         {error, _} = Error -> Error
     end.
+
+-spec publish( mqtt_packet_map:mqtt_message(), term() ) -> ok | {error, eacces}.
+publish(#{ type := publish } = Msg, UserContext) ->
+    publish(?MQTT_SESSIONS_DEFAULT, Msg, UserContext).
+
+-spec publish
+        ( topic(), term(), term() ) -> ok | {error, eacces};
+        ( atom(), mqtt_packet_map:mqtt_message(), term() ) -> ok | {error, eacces}.
+publish(Pool, #{ type := publish, topic := Topic } = Msg, UserContext) when is_atom(Pool) ->
+    Runtime = runtime(),
+    case Runtime:is_allowed(publish, Topic, Msg, UserContext) of
+        true ->
+            mqtt_sessions_router:publish(Pool, Topic, Msg, UserContext);
+        false ->
+            {error, eacces}
+    end;
+publish(Topic, Payload, UserContext) when is_list(Topic), is_binary(Topic) ->
+    publish(?MQTT_SESSIONS_DEFAULT, Topic, Payload, [], UserContext).
+
+-spec publish( atom(), topic(), term(), term() ) -> ok | {error, eacces}.
+publish(Pool, Topic, Payload, UserContext) ->
+    publish(Pool, Topic, Payload, [], UserContext).
+
+-spec publish( atom(), topic(), term(), list(), term() ) -> ok | {error, eacces}.
+publish(Pool, Topic, Payload, Options, UserContext) ->
+    Msg = #{
+        type => publish,
+        payload => Payload,
+        topic => maybe_split_topic(Topic),
+        qos => proplists:get_value(qos, Options, 0),
+        retain => proplists:get_value(retain, Options, false)
+    },
+    publish(Pool, Msg, UserContext).
+
+
+-spec subscribe( topic(), term() ) -> ok | {error, eacces}.
+subscribe(TopicFilter, UserContext) ->
+    subscribe(?MQTT_SESSIONS_DEFAULT, TopicFilter, self(), self(), [], UserContext).
+
+-spec subscribe( atom(), topic(), term() ) -> ok | {error, eacces}.
+subscribe(Pool, TopicFilter, UserContext) ->
+    subscribe(Pool, TopicFilter, self(), self(), [], UserContext).
+
+-spec subscribe( atom(), topic(), mfa() | pid(), term() ) -> ok | {error, eacces}.
+subscribe(Pool, TopicFilter, {_, _, _} = MFA, UserContext) ->
+    subscribe(Pool, TopicFilter, MFA, self(), [], UserContext);
+subscribe(Pool, TopicFilter, Pid, UserContext) when is_pid(Pid) ->
+    subscribe(Pool, TopicFilter, Pid, Pid, [], UserContext).
+
+-spec subscribe( atom(), topic(), pid()|mfa(), pid(), list(), term() ) -> ok | {error, eacces}.
+subscribe(Pool, TopicFilter, Receiver, OwnerPid, Options, UserContext) ->
+    Runtime = runtime(),
+    Topic1 = maybe_split_topic(TopicFilter),
+    case Runtime:is_allowed(subscribe, Topic1, #{}, UserContext) of
+        true ->
+            SubOpts = #{
+                no_local => proplists:get_value(no_local, Options, false)
+            },
+            mqtt_sessions_router:subscribe(Pool, Topic1, Receiver, OwnerPid, SubOpts);
+        false ->
+            {error, eacces}
+    end.
+
+-spec unsubscribe( topic() ) -> ok | {error, notfound}.
+unsubscribe(TopicFilter) ->
+    unsubscribe(?MQTT_SESSIONS_DEFAULT, TopicFilter, self()).
+
+-spec unsubscribe( atom(), topic() ) -> ok | {error, notfound}.
+unsubscribe(Pool, TopicFilter) ->
+    unsubscribe(Pool, TopicFilter, self()).
+
+-spec unsubscribe( atom(), topic(), pid() ) -> ok | {error, notfound}.
+unsubscribe(Pool, TopicFilter, OwnerPid) ->
+    TopicFilter1 = maybe_split_topic(TopicFilter),
+    mqtt_sessions_router:unsubscribe(Pool, TopicFilter1, OwnerPid).
+
+
+maybe_split_topic(B) when is_binary(B) -> binary:split(B, <<"/">>, [global]);
+maybe_split_topic(L) when is_list(L) -> L.
 
 %%--------------------------------------------------------------------
 

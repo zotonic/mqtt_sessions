@@ -29,6 +29,11 @@ init([Pool]) ->
                 type => worker
             },
             #{
+                id => mqtt_sessions_retain,
+                start => {mqtt_sessions_retain, start_link, [ Pool ]},
+                type => worker
+            },
+            #{
                 id => mqtt_sessions_will_sup,
                 start => {mqtt_sessions_will_sup, start_link, [ Pool ]},
                 type => supervisor

@@ -390,7 +390,7 @@ publish(#{ topic := Topic, qos := 2, dup := Dup, packet_id := PacketId } = Msg, 
             end,
             State1 = if
                 RC < 16#80 ->
-                    State#state{ awaiting_rel = WaitRel#{ PacketId => {pubrel, RC, timestamp()} } };
+                    State#state{ awaiting_rel = WaitRel#{ PacketId => {pubrel, RC, mqtt_sessions_timestamp:timestamp()} } };
                 true ->
                     State
             end,
@@ -498,7 +498,7 @@ pubcomp(#{ packet_id := PacketId }, _Options, #state{ awaiting_ack = WaitAck } =
 
 
 %% @doc Handle a subscribe request
-subscribe(#{ topics := Topics } = Msg, Options, #state{ runtime = Runtime } = State) ->
+subscribe(#{ topics := Topics } = Msg, Options, #state{ runtime = Runtime, user_context = UCtx } = State) ->
     Resp = lists:map(
         fun(#{ topic := TopicFilter } = Sub) ->
             case Runtime:is_allowed(subscribe, TopicFilter, Msg, State#state.user_context) of
@@ -509,7 +509,7 @@ subscribe(#{ topics := Topics } = Msg, Options, #state{ runtime = Runtime } = St
                         no_local => maps:get(no_local, Sub, false)
                     },
                     SubOptions1 = maps:remove(topic, SubOptions),
-                    case mqtt_sessions_router:subscribe(State#state.pool, TopicFilter, self(), self(), SubOptions1) of
+                    case mqtt_sessions_router:subscribe(State#state.pool, TopicFilter, self(), self(), SubOptions1, UCtx) of
                         ok -> {ok, QoS};
                         {error, _} -> {error, ?MQTT_RC_ERROR}
                     end;
@@ -565,12 +565,8 @@ relay_publish(#{ type := publish, topic := Topic, message := Msg } = MqttMsg,
     %       as other subscriptions are checked on the moment we subscribe
     case Runtime:is_allowed(publish, Topic, Msg, UCtx) of
         true ->
-            Msg1 = case maps:get(retain_as_published, MqttMsg, false) of
-                false -> Msg#{ retain => false };
-                true -> Msg
-            end,
             QoS = erlang:min( maps:get(qos, Msg1, 0), maps:get(qos, MqttMsg, 0) ),
-            Msg2 = mqtt_sessions_payload:encode(Msg1#{
+            Msg2 = mqtt_sessions_payload:encode(Msg#{
                 qos => QoS,
                 dup => false
             }),
@@ -724,7 +720,7 @@ queue(Msg, State) ->
 
 queue_1(#{ type := Type } = Msg, #state{ msg_nr = MsgNr, pending = Pending } = State) ->
     Props = maps:get(properties, Msg, #{}),
-    Now = timestamp(),
+    Now = mqtt_sessions_timestamp:timestamp(),
     Item = #queued{
         msg_nr = MsgNr,
         type = Type,
@@ -767,13 +763,6 @@ start_keep_alive(#state{ keep_alive = 0 } = State) ->
 start_keep_alive(#state{ keep_alive = N, transport = Pid } = State) ->
     erlang:send_after(N * 500, self(), {keep_alive, Pid}),
     State#state{ keep_alive_counter = 3 }.
-
-% Constant value of calendar:datetime_to_gregorian_seconds({{1970,1,1},{0,0,0}})
--define(SECS_1970, 62167219200).
-
-%% @doc Calculate the current UNIX timestamp (seconds since Jan 1, 1970)
-timestamp() ->
-    calendar:datetime_to_gregorian_seconds(calendar:universal_time()) - ?SECS_1970.
 
 %% @doc Increment the message number, this number is used for order of resent messages
 inc_msg_nr(#state{ msg_nr = Nr } = State) ->

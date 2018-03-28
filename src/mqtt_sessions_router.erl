@@ -1,5 +1,7 @@
 %% @doc Process owning the MQTT topic router.
 
+%% TODO: add topic bindings on retained publish
+
 -module(mqtt_sessions_router).
 
 -behaviour(gen_server).
@@ -7,8 +9,8 @@
 -export([
     publish/3,
     publish/4,
-    subscribe/3,
-    subscribe/5,
+    subscribe/4,
+    subscribe/6,
     unsubscribe/3,
     start_link/1,
     name/1
@@ -69,50 +71,100 @@ publish( Pool, Topic, Msg ) ->
 publish( Pool, Topic, Msg, PublisherContext ) ->
     Paths = router:route(Pool, Topic),
     lists:map(
-        fun(#route{ bound_args = Bound, destination = Dest }) ->
-            case is_no_local(Dest, self()) of
-                true ->
-                    ok;
-                false ->
-                    {Callback, _OwnerPid, Options} = Dest,
-                    MqttMsg = Options#{
-                        type => publish,
-                        pool => Pool,
-                        topic => Topic,
-                        topic_bindings => Bound,
-                        message => Msg,
-                        publisher_context => PublisherContext
-                    },
-                    case Callback of
-                        {io, format, A} ->
-                            erlang:apply(io, format, A ++ [ [ MqttMsg ] ]);
-                        {M,F,A} ->
-                            erlang:apply(M, F, A ++ [ MqttMsg ]);
-                        Pid when is_pid(Pid) ->
-                            Pid ! {mqtt_msg, MqttMsg}
-                    end
-            end
+        fun(Route) ->
+            publish_1(Pool, Topic, Route, Msg, PublisherContext)
         end,
         Paths),
+    case maps:get(retain, Msg, false) of
+        true -> mqtt_sessions_retain:retain(Pool, Msg, PublisherContext);
+        false -> ok
+    end,
     ok.
+
+publish_1(Pool, Topic, #route{ bound_args = Bound, destination = Dest }, Msg, PublisherContext) ->
+    case is_no_local(Dest, self()) of
+        true ->
+            ok;
+        false ->
+            {Callback, _OwnerPid, Options} = Dest,
+            Msg1 = case maps:get(retain, Msg, false) of
+                true ->
+                    case maps:get(retain_as_published, Msg, false) of
+                        false -> Msg#{ retain => false };
+                        true -> Msg
+                    end;
+                false -> Msg
+            end,
+            MqttMsg = Options#{
+                type => publish,
+                pool => Pool,
+                topic => Topic,
+                topic_bindings => Bound,
+                message => Msg1,
+                publisher_context => PublisherContext
+            },
+            case Callback of
+                {io, format, A} ->
+                    erlang:apply(io, format, A ++ [ [ MqttMsg ] ]);
+                {M,F,A} ->
+                    erlang:apply(M, F, A ++ [ MqttMsg ]);
+                Pid when is_pid(Pid) ->
+                    Pid ! {mqtt_msg, MqttMsg}
+            end
+    end.
 
 is_no_local({_Callback, OwnerPid, #{ no_local := true }}, OwnerPid) -> true;
 is_no_local(_Destination, _Pid) -> false.
 
 
--spec subscribe( atom(), list(), subscriber() ) -> ok | {error, invalid_subscriber}.
-subscribe( Pool, Topic, {_, _, _} = MFA) ->
-    subscribe( Pool, Topic, MFA, self(), #{});
-subscribe( Pool, Topic, Pid) when is_pid(Pid) ->
-    subscribe( Pool, Topic, Pid, Pid, #{}).
+-spec subscribe( atom(), list(), subscriber(), term() ) -> ok | {error, invalid_subscriber}.
+subscribe( Pool, Topic, {_, _, _} = MFA, SubscriberContext) ->
+    subscribe( Pool, Topic, MFA, self(), #{}, SubscriberContext);
+subscribe( Pool, Topic, Pid, SubscriberContext) when is_pid(Pid) ->
+    subscribe( Pool, Topic, Pid, Pid, #{}, SubscriberContext).
 
-subscribe( Pool, TopicFilter, Subscriber, OwnerPid, Options ) when is_pid(OwnerPid), is_map(Options) ->
+subscribe( Pool, TopicFilter, Subscriber, OwnerPid, Options, SubscriberContext ) when is_pid(OwnerPid), is_map(Options) ->
     case is_valid_subscriber(Subscriber) of
         true ->
-            gen_server:call(name(Pool), {subscribe, TopicFilter, Subscriber, OwnerPid, Options}, infinity);
+            case gen_server:call(name(Pool), {subscribe, TopicFilter, Subscriber, OwnerPid, Options}, infinity) of
+                {ok, IsNew} ->
+                    % Check retained messages, publish to the Subscriber
+                    maybe_publish_retained(Pool, IsNew, TopicFilter, Subscriber, Options, SubscriberContext),
+                    ok;
+                {error, _} = Error ->
+                    Error
+            end;
         false ->
             {error, invalid_subscriber}
     end.
+
+maybe_publish_retained(Pool, IsNew, TopicFilter, Subscriber, Options, SubscriberContext) ->
+    case maps:get(retain_handling, Options, 0) of
+        0 ->
+            % All retained messages
+            publish_retained(Pool, TopicFilter, Subscriber, Options, SubscriberContext);
+        1 when IsNew ->
+            % Only if new subscription
+            publish_retained(Pool, TopicFilter, Subscriber, Options, SubscriberContext);
+        _ ->
+            ok
+    end.
+
+publish_retained(Pool, TopicFilter, Subscriber, Options, SubscriberContext) ->
+    {ok, Ms} = mqtt_sessions_retain:lookup(Pool, TopicFilter),
+    Runtime = mqtt_sessions:runtime(),
+    lists:foreach(
+        fun({#{ topic := Topic } = Msg, PublisherContext}) ->
+            case Runtime:is_allowed(subscribe, Topic, Msg, SubscriberContext) of
+                true ->
+                    Bound = bind(Topic, TopicFilter),
+                    Dest = {Subscriber, undefined, Options},
+                    publish_1(Pool, Topic, #route{ bound_args = Bound, destination = Dest }, Msg, PublisherContext);
+                false ->
+                    ok
+            end
+        end,
+        Ms).
 
 -spec unsubscribe( atom(), list(), pid() ) -> ok | {error, notfound}.
 unsubscribe( Pool, TopicFilter, Pid ) ->
@@ -141,15 +193,16 @@ init([ Pool ]) ->
         monitors = #{}
     }}.
 
-handle_call({subscribe, TopicFilter, Subscriber, OwnerPid, Options}, _From,
+handle_call({subscribe, TopicFilter0, Subscriber, OwnerPid, Options}, _From,
             #state{ router = Router, monitors = Monitors } = State) ->
+    TopicFilter = map_wildcards(TopicFilter0),
     Current = maps:get(OwnerPid, Monitors, []),
-    Current1 = case lists:keysearch(TopicFilter, 1, Current) of
+    {Current1, IsNew} = case lists:keysearch(TopicFilter, 1, Current) of
         {value, {_Filter, PrevSubscriber}} ->
             router:remove_path(Router, TopicFilter, PrevSubscriber),
-            lists:keydelete(TopicFilter, 1, Current);
+            {lists:keydelete(TopicFilter, 1, Current), false};
         false ->
-            Current
+            {Current, true}
     end,
     Destination = {Subscriber, OwnerPid, Options},
     ok = router:add(Router, TopicFilter, Destination),
@@ -160,9 +213,10 @@ handle_call({subscribe, TopicFilter, Subscriber, OwnerPid, Options}, _From,
     Monitors1 = Monitors#{
         OwnerPid => [ {TopicFilter, Destination} | Current1
     ]},
-    {reply, ok, State#state{ monitors = Monitors1 }};
-handle_call({unsubscribe, TopicFilter, Pid}, _From,
+    {reply, {ok, IsNew}, State#state{ monitors = Monitors1 }};
+handle_call({unsubscribe, TopicFilter0, Pid}, _From,
             #state{ router = Router, monitors = Monitors } = State) ->
+    TopicFilter = map_wildcards(TopicFilter0),
     Subs = maps:get(Pid, Monitors, []),
     case lists:keysearch(TopicFilter, 1, Subs) of
         {value, {_Filter, Destination}} ->
@@ -193,6 +247,31 @@ terminate(_Reason, _State) ->
 % ---------------------------------------------------------------------------------------
 % ----------------------------- support functions ---------------------------------------
 % ---------------------------------------------------------------------------------------
+
+%% Bind variables from the match to the path
+%%
+bind(Path, Match) ->
+    bind(Path, Match, []).
+
+bind([], [], Acc) ->
+    lists:reverse(Acc);
+bind(P, [<<"#">>], Acc) ->
+    lists:reverse([{'#', P}|Acc]);
+bind([H|Path], [<<"+">>|Match], Acc) ->
+    bind(Path, Match, [H|Acc]);
+bind([_|Path], [_|Match], Acc) ->
+    bind(Path, Match, Acc).
+
+
+map_wildcards(TopicFilter) ->
+    lists:map(
+        fun
+            (<<"#">>) -> '#';
+            (<<"+">>) -> '+';
+            (T) -> T
+        end,
+        TopicFilter).
+
 
 %% @doc Remove all subscriptions belonging to a certain process
 remove_subscriber(Pid, #state{ router = Router, monitors = Monitors } = State) ->

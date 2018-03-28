@@ -153,7 +153,7 @@ subscribe(Pool, TopicFilter, Receiver, OwnerPid, Options, UserContext) ->
             SubOpts = #{
                 no_local => proplists:get_value(no_local, Options, false)
             },
-            mqtt_sessions_router:subscribe(Pool, Topic1, Receiver, OwnerPid, SubOpts);
+            mqtt_sessions_router:subscribe(Pool, Topic1, Receiver, OwnerPid, SubOpts, UserContext);
         false ->
             {error, eacces}
     end.

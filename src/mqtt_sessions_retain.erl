@@ -38,7 +38,12 @@ start_link( Pool ) ->
 
 -spec retain( atom(), mqtt_packet_map:mqtt_message(), term() ) -> ok.
 retain(Pool, #{ type := publish, topic := Topic } = Msg, PublisherContext) when is_list(Topic) ->
-    gen_server:call(name(Pool), {retain, Msg, PublisherContext}, infinity).
+    case is_empty_payload(Msg) of
+        true ->
+            gen_server:call(name(Pool), {delete, Topic}, infinity);
+        false ->
+            gen_server:call(name(Pool), {retain, Msg, PublisherContext}, infinity)
+    end.
 
 -spec lookup( atom(), list(binary()) ) -> {ok, [ {mqtt_packet_map:mqtt_message(), term()} ]}.
 lookup(Pool, TopicFilter) ->
@@ -104,6 +109,16 @@ handle_call({retain, #{ topic := Topic } = Msg, PublisherContext}, _From, #state
     ets:insert(Topics, {Topic, QoS, Expire, Ref}),
     {reply, ok, State};
 
+handle_call({delete, Topic}, _From, #state{ topics = Topics, messages = Messages } = State) ->
+    case ets:lookup(Topics, Topic) of
+        [{_Topic, _QoS, _Expire, Ref}] ->
+            ets:delete(Topics, Topic),
+            ets:delete(Messages, Ref);
+        [] ->
+            ok
+    end,
+     {reply, ok, State};
+
 handle_call(Cmd, _From, State) ->
     {stop, {unknown_cmd, Cmd}, State}.
 
@@ -136,6 +151,11 @@ terminate(_Reason, _State) ->
 
 % second([ _, B | _ ]) -> B;
 % second(_) -> undefined.
+
+is_empty_payload(#{ payload := undefined }) -> true;
+is_empty_payload(#{ payload := <<>> }) -> true;
+is_empty_payload(#{ payload := _}) -> false;
+is_empty_payload(#{}) -> true.
 
 do_cleanup(Topics, Messages) ->
     Now = mqtt_sessions_timestamp:timestamp(),

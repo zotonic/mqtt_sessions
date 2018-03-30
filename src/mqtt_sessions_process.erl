@@ -565,7 +565,7 @@ relay_publish(#{ type := publish, topic := Topic, message := Msg } = MqttMsg,
     %       as other subscriptions are checked on the moment we subscribe
     case Runtime:is_allowed(publish, Topic, Msg, UCtx) of
         true ->
-            QoS = erlang:min( maps:get(qos, Msg1, 0), maps:get(qos, MqttMsg, 0) ),
+            QoS = erlang:min( maps:get(qos, Msg, 0), maps:get(qos, MqttMsg, 0) ),
             Msg2 = mqtt_sessions_payload:encode(Msg#{
                 qos => QoS,
                 dup => false

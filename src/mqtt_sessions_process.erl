@@ -187,7 +187,7 @@ handle_info({keep_alive, Pid}, #state{ keep_alive_counter = N, transport = Pid }
 handle_info({keep_alive, _Pid}, State) ->
     {noreply, State};
 
-handle_info({publish_jobs, JobPid}, #state{ publish_jobs = Jobs } = State) ->
+handle_info({publish_job, JobPid}, #state{ publish_jobs = Jobs } = State) ->
     State1 = case erlang:is_process_alive(JobPid) of
         true ->
             State#state{ publish_jobs = Jobs#{ JobPid => erlang:monitor(process, JobPid) } };

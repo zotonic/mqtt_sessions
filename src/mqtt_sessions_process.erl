@@ -1,8 +1,26 @@
 %% @doc Process handling one single MQTT session.
-%%      A single session can have multiple transports attached.
+%%      Transports attaches and detaches from this session.
+%% @author Marc Worrell <marc@worrell.nl>
+%% @copyright 2018 Marc Worrell
+
+%% Copyright 2018 Marc Worrell
+%%
+%% Licensed under the Apache License, Version 2.0 (the "License");
+%% you may not use this file except in compliance with the License.
+%% You may obtain a copy of the License at
+%%
+%%     http://www.apache.org/licenses/LICENSE-2.0
+%%
+%% Unless required by applicable law or agreed to in writing, software
+%% distributed under the License is distributed on an "AS IS" BASIS,
+%% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+%% See the License for the specific language governing permissions and
+%% limitations under the License.
+
 
 %% TODO: Limit in-flight acks (both ways)
-%% TODO: Drop QoS 0 messages if pending gets too large
+%% TODO: Drop outgoing QoS 0 messages if pending gets too large
+%% TODO: Refuse incoming publish messages if too many publish_jobs
 
 -module(mqtt_sessions_process).
 
@@ -54,7 +72,10 @@
     msg_nr = 0 :: non_neg_integer(),
     keep_alive = ?KEEP_ALIVE :: non_neg_integer(),
     keep_alive_counter = 3,
-    session_expiry_interval = ?SESSION_EXPIRY :: non_neg_integer()
+    session_expiry_interval = ?SESSION_EXPIRY :: non_neg_integer(),
+
+    % Tracking publish jobs
+    publish_jobs = #{} :: map()
 }).
 
 -record(queued, {
@@ -166,6 +187,15 @@ handle_info({keep_alive, Pid}, #state{ keep_alive_counter = N, transport = Pid }
 handle_info({keep_alive, _Pid}, State) ->
     {noreply, State};
 
+handle_info({publish_jobs, JobPid}, #state{ publish_jobs = Jobs } = State) ->
+    State1 = case erlang:is_process_alive(JobPid) of
+        true ->
+            State#state{ publish_jobs = Jobs#{ JobPid => erlang:monitor(process, JobPid) } };
+        false ->
+            State
+    end,
+    {noreply, State1};
+
 handle_info({'DOWN', _Mref, process, Pid, _Reason}, #state{ transport = Pid } = State) ->
     State1 = do_disconnected(State),
     {noreply, State1};
@@ -175,8 +205,14 @@ handle_info({'DOWN', _Mref, process, Pid, _Reason}, #state{ will_pid = Pid } = S
         reason_code => ?MQTT_RC_ERROR
     }, State),
     {stop, shutdown, State};
-handle_info({'DOWN', _Mref, process, _Pid, _Reason}, State) ->
-    {noreply, State};
+handle_info({'DOWN', _Mref, process, Pid, _Reason}, State) ->
+    State1 = case maps:is_key(Pid, State#state.publish_jobs) of
+        true ->
+            State#state{ publish_jobs = maps:remove(Pid, State#state.publish_jobs) };
+        false ->
+            State
+    end,
+    {noreply, State1};
 
 handle_info(Info, State) ->
     lager:info("Unknown info message ~p", [Info]),

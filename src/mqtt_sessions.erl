@@ -1,3 +1,20 @@
+%% @author Marc Worrell <marc@worrell.nl>
+%% @copyright 2018 Marc Worrell
+
+%% Copyright 2018 Marc Worrell
+%%
+%% Licensed under the Apache License, Version 2.0 (the "License");
+%% you may not use this file except in compliance with the License.
+%% You may obtain a copy of the License at
+%%
+%%     http://www.apache.org/licenses/LICENSE-2.0
+%%
+%% Unless required by applicable law or agreed to in writing, software
+%% distributed under the License is distributed on an "AS IS" BASIS,
+%% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+%% See the License for the specific language governing permissions and
+%% limitations under the License.
+
 -module(mqtt_sessions).
 
 -behaviour(application).
@@ -33,7 +50,10 @@
     connect_transport/2,
     connect_transport/3,
     disconnect_transport/2,
-    disconnect_transport/3
+    disconnect_transport/3,
+
+    sidejobs_limit/0,
+    sidejobs_per_session/0
     ]).
 
 
@@ -57,6 +77,8 @@
     topic/0
 ]).
 
+-define(SIDEJOBS_PER_SESSION, 20).
+
 -include("../include/mqtt_sessions.hrl").
 
 %%====================================================================
@@ -69,12 +91,12 @@ start() ->
 
 -spec start( application:start_type(), term() ) -> {ok, pid()} | {error, term()}.
 start(_StartType, _StartArgs) ->
+    sidejob:new_resource(?MQTT_SESSIONS_JOBS, sidejob_supervisor, sidejobs_limit()),
     mqtt_sessions_sup:start_link().
 
 -spec stop( term() ) -> ok.
 stop(_State) ->
     ok.
-
 
 -spec find_session( session_ref() ) -> {ok, pid()} | {error, notfound}.
 find_session( ClientId ) ->
@@ -112,39 +134,40 @@ publish(Pool, #{ type := publish, topic := Topic } = Msg, UserContext) when is_a
             {error, eacces}
     end;
 publish(Topic, Payload, UserContext) when is_list(Topic), is_binary(Topic) ->
-    publish(?MQTT_SESSIONS_DEFAULT, Topic, Payload, [], UserContext).
+    publish(?MQTT_SESSIONS_DEFAULT, Topic, Payload, #{}, UserContext).
 
 -spec publish( atom(), topic(), term(), term() ) -> ok | {error, eacces}.
 publish(Pool, Topic, Payload, UserContext) ->
-    publish(Pool, Topic, Payload, [], UserContext).
+    publish(Pool, Topic, Payload, #{}, UserContext).
 
--spec publish( atom(), topic(), term(), list(), term() ) -> ok | {error, eacces}.
+-spec publish( atom(), topic(), term(), map(), term() ) -> ok | {error, eacces}.
 publish(Pool, Topic, Payload, Options, UserContext) ->
     Msg = #{
         type => publish,
         payload => Payload,
         topic => maybe_split_topic(Topic),
-        qos => proplists:get_value(qos, Options, 0),
-        retain => proplists:get_value(retain, Options, false)
+        qos => maps:get(qos, Options, 0),
+        retain => maps:get(retain, Options, false),
+        properties => maps:get(properties, Options, #{})
     },
     publish(Pool, Msg, UserContext).
 
 
 -spec subscribe( topic(), term() ) -> ok | {error, eacces}.
 subscribe(TopicFilter, UserContext) ->
-    subscribe(?MQTT_SESSIONS_DEFAULT, TopicFilter, self(), self(), [], UserContext).
+    subscribe(?MQTT_SESSIONS_DEFAULT, TopicFilter, self(), self(), #{}, UserContext).
 
 -spec subscribe( atom(), topic(), term() ) -> ok | {error, eacces}.
 subscribe(Pool, TopicFilter, UserContext) ->
-    subscribe(Pool, TopicFilter, self(), self(), [], UserContext).
+    subscribe(Pool, TopicFilter, self(), self(), #{}, UserContext).
 
 -spec subscribe( atom(), topic(), mfa() | pid(), term() ) -> ok | {error, eacces}.
 subscribe(Pool, TopicFilter, {_, _, _} = MFA, UserContext) ->
-    subscribe(Pool, TopicFilter, MFA, self(), [], UserContext);
+    subscribe(Pool, TopicFilter, MFA, self(), #{}, UserContext);
 subscribe(Pool, TopicFilter, Pid, UserContext) when is_pid(Pid) ->
-    subscribe(Pool, TopicFilter, Pid, Pid, [], UserContext).
+    subscribe(Pool, TopicFilter, Pid, Pid, #{}, UserContext).
 
--spec subscribe( atom(), topic(), pid()|mfa(), pid(), list(), term() ) -> ok | {error, eacces}.
+-spec subscribe( atom(), topic(), pid()|mfa(), pid(), map(), term() ) -> ok | {error, eacces}.
 subscribe(Pool, TopicFilter, Receiver, OwnerPid, Options, UserContext) ->
     Runtime = runtime(),
     Topic1 = maybe_split_topic(TopicFilter),
@@ -249,4 +272,21 @@ disconnect_transport(Pool, ClientId, Pid) ->
         {error, _} = Error ->
             Error
     end.
+
+
+%% @doc Limit the number of sidejobs for message dispatching.
+-spec sidejobs_limit() -> pos_integer().
+sidejobs_limit() ->
+    case application:get_env(mqtt_sessions, sidejobs_limit) of
+        {ok, N} -> N;
+        undefined -> erlang:max(erlang:system_info(process_limit) div 10, 10000)
+    end.
+
+-spec sidejobs_per_session() -> pos_integer().
+sidejobs_per_session() ->
+    case application:get_env(mqtt_sessions, sidejobs_per_session) of
+        {ok, N} -> N;
+        undefined -> ?SIDEJOBS_PER_SESSION
+    end.
+
 

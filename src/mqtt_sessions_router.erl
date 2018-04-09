@@ -1,6 +1,20 @@
 %% @doc Process owning the MQTT topic router.
+%% @author Marc Worrell <marc@worrell.nl>
+%% @copyright 2018 Marc Worrell
 
-%% TODO: add topic bindings on retained publish
+%% Copyright 2018 Marc Worrell
+%%
+%% Licensed under the Apache License, Version 2.0 (the "License");
+%% you may not use this file except in compliance with the License.
+%% You may obtain a copy of the License at
+%%
+%%     http://www.apache.org/licenses/LICENSE-2.0
+%%
+%% Unless required by applicable law or agreed to in writing, software
+%% distributed under the License is distributed on an "AS IS" BASIS,
+%% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+%% See the License for the specific language governing permissions and
+%% limitations under the License.
 
 -module(mqtt_sessions_router).
 
@@ -69,52 +83,13 @@ publish( Pool, Topic, Msg ) ->
 
 -spec publish( atom(), list(), mqtt_packet_map:mqtt_message(), term() ) -> ok.
 publish( Pool, Topic, Msg, PublisherContext ) ->
-    Paths = router:route(Pool, Topic),
-    lists:map(
-        fun(Route) ->
-            publish_1(Pool, Topic, Route, Msg, PublisherContext)
-        end,
-        Paths),
+    Routes = router:route(Pool, Topic),
+    mqtt_sessions_job:publish(Pool, Topic, Routes, Msg, PublisherContext),
     case maps:get(retain, Msg, false) of
         true -> mqtt_sessions_retain:retain(Pool, Msg, PublisherContext);
         false -> ok
     end,
     ok.
-
-publish_1(Pool, Topic, #route{ bound_args = Bound, destination = Dest }, Msg, PublisherContext) ->
-    case is_no_local(Dest, self()) of
-        true ->
-            ok;
-        false ->
-            {Callback, _OwnerPid, Options} = Dest,
-            Msg1 = case maps:get(retain, Msg, false) of
-                true ->
-                    case maps:get(retain_as_published, Msg, false) of
-                        false -> Msg#{ retain => false };
-                        true -> Msg
-                    end;
-                false -> Msg
-            end,
-            MqttMsg = Options#{
-                type => publish,
-                pool => Pool,
-                topic => Topic,
-                topic_bindings => Bound,
-                message => Msg1,
-                publisher_context => PublisherContext
-            },
-            case Callback of
-                {io, format, A} ->
-                    erlang:apply(io, format, A ++ [ [ MqttMsg ] ]);
-                {M,F,A} ->
-                    erlang:apply(M, F, A ++ [ MqttMsg ]);
-                Pid when is_pid(Pid) ->
-                    Pid ! {mqtt_msg, MqttMsg}
-            end
-    end.
-
-is_no_local({_Callback, OwnerPid, #{ no_local := true }}, OwnerPid) -> true;
-is_no_local(_Destination, _Pid) -> false.
 
 
 -spec subscribe( atom(), list(), subscriber(), term() ) -> ok | {error, invalid_subscriber}.
@@ -152,19 +127,7 @@ maybe_publish_retained(Pool, IsNew, TopicFilter, Subscriber, Options, Subscriber
 
 publish_retained(Pool, TopicFilter, Subscriber, Options, SubscriberContext) ->
     {ok, Ms} = mqtt_sessions_retain:lookup(Pool, TopicFilter),
-    Runtime = mqtt_sessions:runtime(),
-    lists:foreach(
-        fun({#{ topic := Topic } = Msg, PublisherContext}) ->
-            case Runtime:is_allowed(subscribe, Topic, Msg, SubscriberContext) of
-                true ->
-                    Bound = bind(Topic, TopicFilter),
-                    Dest = {Subscriber, undefined, Options},
-                    publish_1(Pool, Topic, #route{ bound_args = Bound, destination = Dest }, Msg, PublisherContext);
-                false ->
-                    ok
-            end
-        end,
-        Ms).
+    mqtt_sessions_job:publish_retained(Pool, TopicFilter, Ms, Subscriber, Options, SubscriberContext).
 
 -spec unsubscribe( atom(), list(), pid() ) -> ok | {error, notfound}.
 unsubscribe( Pool, TopicFilter, Pid ) ->
@@ -247,20 +210,6 @@ terminate(_Reason, _State) ->
 % ---------------------------------------------------------------------------------------
 % ----------------------------- support functions ---------------------------------------
 % ---------------------------------------------------------------------------------------
-
-%% Bind variables from the match to the path
-%%
-bind(Path, Match) ->
-    bind(Path, Match, []).
-
-bind([], [], Acc) ->
-    lists:reverse(Acc);
-bind(P, [<<"#">>], Acc) ->
-    lists:reverse([{'#', P}|Acc]);
-bind([H|Path], [<<"+">>|Match], Acc) ->
-    bind(Path, Match, [H|Acc]);
-bind([_|Path], [_|Match], Acc) ->
-    bind(Path, Match, Acc).
 
 
 map_wildcards(TopicFilter) ->

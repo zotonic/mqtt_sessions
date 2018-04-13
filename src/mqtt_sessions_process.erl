@@ -57,6 +57,7 @@
     pool :: atom(),
     runtime :: atom(),
     client_id :: binary(),
+    routing_id :: binary(),
     is_connected = false :: boolean(),
     is_session_present = false :: boolean(),
     user_context :: term(),
@@ -125,6 +126,7 @@ start_link( Pool, ClientId ) ->
 % ---------------------------------------------------------------------------------------
 
 init([ Pool, ClientId ]) ->
+    RoutingId = mqtt_sessions_registry:routing_id(Pool),
     mqtt_sessions_registry:register(Pool, ClientId, self()),
     {ok, WillPid} = mqtt_sessions_will_sup:start(Pool, self()),
     {ok, Runtime} = application:get_env(mqtt_sessions, runtime),
@@ -132,8 +134,9 @@ init([ Pool, ClientId ]) ->
     {ok, #state{
         pool = Pool,
         runtime = Runtime,
-        user_context = Runtime:new_user_context(Pool, ClientId),
+        user_context = Runtime:new_user_context(Pool, ClientId, RoutingId),
         client_id = ClientId,
+        routing_id = RoutingId,
         pending = queue:new(),
         will_pid = WillPid
     }}.
@@ -708,7 +711,8 @@ reply_connack(#{ type := connack } = ConnAck, Options, State) ->
             server_keep_alive => State#state.keep_alive,
             assigned_client_identifier => State#state.client_id,
             subscription_identifier_available => false,
-            shared_subscription_available => false
+            shared_subscription_available => false,
+            <<"cotonic-routing-id">> => State#state.routing_id
         }
     },
     reply(ConnAck1, Options, State).

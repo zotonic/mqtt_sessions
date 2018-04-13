@@ -27,6 +27,7 @@
 
 -export([
     runtime/0,
+    set_runtime/1,
 
     find_session/1,
     find_session/2,
@@ -230,6 +231,11 @@ runtime() ->
         {ok, Runtime} when is_atom(Runtime) -> Runtime;
         undefined -> mqtt_sessions_runtime
     end.
+
+%% @doc Set the runtime module
+-spec set_runtime( atom() ) -> ok.
+set_runtime(Runtime) ->
+    application:set_env(mqtt_sessions, runtime, Runtime).
 
 
 %% @doc Handle an incoming message using the default pool.

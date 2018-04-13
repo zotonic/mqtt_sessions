@@ -19,7 +19,7 @@
 -module(mqtt_sessions_runtime).
 
 -export([
-    new_user_context/2,
+    new_user_context/3,
     connect/2,
     reauth/2,
     is_allowed/4
@@ -46,11 +46,12 @@
 % TODO: check authentication credentials
 % TODO: if reconnect, check against previous credentials (MUST be the same)
 
--spec new_user_context( atom(), binary() ) -> term().
-new_user_context( Pool, ClientId ) ->
+-spec new_user_context( atom(), binary(), binary() ) -> term().
+new_user_context( Pool, ClientId, RoutingId ) ->
     #{
         pool => Pool,
         client_id => ClientId,
+        routing_id => RoutingId,
         user => undefined
     }.
 
@@ -89,7 +90,7 @@ connect(_Packet, UserContext) ->
     {ok, ConnAck, UserContext}.
 
 
-%% @spec Re-authentication. This called when the client requests a re-authentication (or replies in a AUTH re-authentication).
+%% @spec Re-authentication. This is called when the client requests a re-authentication (or replies in a AUTH re-authentication).
 -spec reauth( mqtt_packet_map:mqtt_packet(), user_context()) -> {ok, mqtt_packet_map:mqtt_packet(), user_context()} | {error, term()}.
 reauth(#{ type := auth }, _UserContext) ->
     {error, notsupported}.

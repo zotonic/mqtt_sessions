@@ -36,7 +36,8 @@
     find_session/2,
     whois/1,
     register/3,
-    client_id/1
+    client_id/1,
+    routing_id/1
     ]).
 
 -define(CLIENT_ID_LEN, 20).
@@ -84,6 +85,13 @@ whois( Pid ) ->
 -spec client_id( atom() ) -> binary().
 client_id( _Pool ) ->
     make_any_char_id(?CLIENT_ID_LEN).
+
+%% @doc Generate a new (random) RoutingId of 22 bytes.
+%%      A ClientID may be 1 to 23 utf8 encoded bytes.
+-spec routing_id( atom() ) -> binary().
+routing_id( _Pool ) ->
+    Id = make_any_char_id(?CLIENT_ID_LEN),
+    <<"r:", Id/binary>>.
 
 
 %% @doc Register a session with the registry, called by the session.

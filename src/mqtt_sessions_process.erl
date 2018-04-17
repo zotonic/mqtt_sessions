@@ -730,7 +730,6 @@ reply(undefined, State) ->
 reply(Msg, #state{ transport = undefined } = State) ->
     queue(Msg, State);
 reply(Msg, #state{ transport = Transport } = State) ->
-    io:format("~nREPLY: ~p~n~n", [Msg]),
     Transport ! {reply, encode(Msg)},
     State.
 

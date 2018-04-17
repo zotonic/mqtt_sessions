@@ -175,7 +175,7 @@ subscribe(Pool, TopicFilter, Receiver, OwnerPid, Options, UserContext) ->
     case Runtime:is_allowed(subscribe, Topic1, #{}, UserContext) of
         true ->
             SubOpts = #{
-                no_local => proplists:get_value(no_local, Options, false)
+                no_local => maps:get(no_local, Options, false)
             },
             mqtt_sessions_router:subscribe(Pool, Topic1, Receiver, OwnerPid, SubOpts, UserContext);
         false ->

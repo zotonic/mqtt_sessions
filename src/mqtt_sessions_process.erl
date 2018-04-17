@@ -320,7 +320,6 @@ connect_auth(Msg, Options, #state{ runtime = Runtime, is_connected = IsConnected
                 will = undefined
             },
             State2 = reply_connack(ConnAck, Options, State1),
-            io:format("~p~n~n", [State2]),
             case ReasonCode of
                 ?MQTT_RC_SUCCESS ->
                     mqtt_sessions_will:connected(State2#state.will_pid, State#state.will,
@@ -596,41 +595,31 @@ disconnect(#{ reason_code := RC, properties := Props }, _Options, State) ->
 % ---------------------------------------------------------------------------------------
 
 
-relay_publish(#{ type := publish, topic := Topic, message := Msg } = MqttMsg,
-              #state{ runtime = Runtime, user_context = UCtx } = State) ->
-    io:format("~nRECEIVED MESSAGE (~p) ~p~n", [ State#state.client_id,Msg]),
-    % Check if we are allowed to see this topic
-    % TODO: this can be removed, because this is a filter for retained messages
-    %       as other subscriptions are checked on the moment we subscribe
-    case Runtime:is_allowed(publish, Topic, Msg, UCtx) of
-        true ->
-            QoS = erlang:min( maps:get(qos, Msg, 0), maps:get(qos, MqttMsg, 0) ),
-            Msg2 = mqtt_sessions_payload:encode(Msg#{
-                qos => QoS,
-                dup => false
-            }),
-            {StateN, MsgN} = case QoS of
-                0 ->
-                    {State, Msg2#{ packet_id => 0 }};
-                _ ->
-                    State1 = #state{ packet_id = PacketId } = inc_packet_id(State),
-                    State2 = #state{ msg_nr = MsgNr } = inc_msg_nr(State1),
-                    AckRec = case QoS of
-                        1 -> puback;
-                        2 -> pubrec
-                    end,
-                    Msg3 = Msg2#{
-                        packet_id => PacketId
-                    },
-                    State3 = State2#state{
-                        awaiting_ack = (State2#state.awaiting_ack)#{ PacketId => {MsgNr, AckRec, Msg3} }
-                    },
-                    {State3, Msg3}
+relay_publish(#{ type := publish, message := Msg } = MqttMsg, State) ->
+    QoS = erlang:min( maps:get(qos, Msg, 0), maps:get(qos, MqttMsg, 0) ),
+    Msg2 = mqtt_sessions_payload:encode(Msg#{
+        qos => QoS,
+        dup => false
+    }),
+    {StateN, MsgN} = case QoS of
+        0 ->
+            {State, Msg2#{ packet_id => 0 }};
+        _ ->
+            State1 = #state{ packet_id = PacketId } = inc_packet_id(State),
+            State2 = #state{ msg_nr = MsgNr } = inc_msg_nr(State1),
+            AckRec = case QoS of
+                1 -> puback;
+                2 -> pubrec
             end,
-            reply(MsgN, [], StateN);
-        false ->
-            State
-    end.
+            Msg3 = Msg2#{
+                packet_id => PacketId
+            },
+            State3 = State2#state{
+                awaiting_ack = (State2#state.awaiting_ack)#{ PacketId => {MsgNr, AckRec, Msg3} }
+            },
+            {State3, Msg3}
+    end,
+    reply(MsgN, [], StateN).
 
 
 % ---------------------------------------------------------------------------------------

@@ -1,6 +1,8 @@
-# mqtt_sessions
+[![Build Status](https://travis-ci.org/zotonic/mqtt_sessions.svg?branch=master)](https://travis-ci.org/zotonic/mqtt_sessions)
 
-MQTT session and topic routing - embeddable in Erlang projects.
+# MQTT v5 server side sessions and routing
+
+MQTT v5 session and topic routing - embeddable in Erlang projects.
 
 
 ### TODO

@@ -34,6 +34,13 @@
     fetch_queue/1,
     fetch_queue/2,
 
+    get_user_context/1,
+    get_user_context/2,
+    set_user_context/2,
+    set_user_context/3,
+    update_user_context/2,
+    update_user_context/3,
+
     publish/2,
     publish/3,
     publish/4,
@@ -113,9 +120,42 @@ fetch_queue(ClientId) ->
     fetch_queue(?MQTT_SESSIONS_DEFAULT, ClientId).
 
 -spec fetch_queue( atom(), session_ref() ) -> {ok, list( mqtt_packet_map:mqtt_message() | binary() )} | {error, notfound}.
-fetch_queue( Pool, ClientId ) ->
+fetch_queue(Pool, ClientId) ->
     case find_session(Pool, ClientId) of
         {ok, Pid} -> mqtt_sessions_process:fetch_queue(Pid);
+        {error, _} = Error -> Error
+    end.
+
+-spec get_user_context( session_ref() ) -> {ok, term()} | {error, notfound | noproc}.
+get_user_context(ClientId) ->
+    get_user_context(?MQTT_SESSIONS_DEFAULT, ClientId).
+
+-spec get_user_context( atom(), session_ref() ) -> {ok, term()} | {error, notfound | noproc}.
+get_user_context(Pool, ClientId) ->
+    case find_session(Pool, ClientId) of
+        {ok, Pid} -> mqtt_sessions_process:get_user_context(Pid);
+        {error, _} = Error -> Error
+    end.
+
+-spec set_user_context( session_ref(), term() ) -> {ok, term()} | {error, notfound | noproc}.
+set_user_context(ClientId, UserContext) ->
+    set_user_context(?MQTT_SESSIONS_DEFAULT, ClientId, UserContext).
+
+-spec set_user_context( atom(), session_ref(), term() ) -> {ok, term()} | {error, notfound | noproc}.
+set_user_context(Pool, ClientId, UserContext) ->
+    case find_session(Pool, ClientId) of
+        {ok, Pid} -> mqtt_sessions_process:set_user_context(Pid, UserContext);
+        {error, _} = Error -> Error
+    end.
+
+-spec update_user_context( session_ref(), fun( (term()) -> term() ) ) -> {ok, term()} | {error, notfound | noproc}.
+update_user_context(ClientId, Fun) ->
+    update_user_context(?MQTT_SESSIONS_DEFAULT, ClientId, Fun).
+
+-spec update_user_context( atom(), session_ref(), fun( (term()) -> term() ) ) -> {ok, term()} | {error, notfound | noproc}.
+update_user_context(Pool, ClientId, Fun) ->
+    case find_session(Pool, ClientId) of
+        {ok, Pid} -> mqtt_sessions_process:update_user_context(Pid, Fun);
         {error, _} = Error -> Error
     end.
 

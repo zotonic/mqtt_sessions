@@ -27,6 +27,10 @@
 -behaviour(gen_server).
 
 -export([
+    get_user_context/1,
+    set_user_context/2,
+    update_user_context/2,
+
     kill/1,
     incoming_message/3,
     fetch_queue/1,
@@ -94,6 +98,34 @@
 -include_lib("mqtt_packet_map/include/mqtt_packet_map.hrl").
 
 
+-spec get_user_context( pid() ) -> {ok, term()} | {error, noproc}.
+get_user_context(Pid) ->
+    try
+        gen_server:call(Pid, get_user_context, infinity)
+    catch
+        exit:{noproc, _} ->
+            {error, noproc}
+    end.
+
+-spec set_user_context( pid(), term() ) -> ok | {error, noproc}.
+set_user_context(Pid, UserContext) ->
+    try
+        gen_server:call(Pid, {set_user_context, UserContext}, infinity)
+    catch
+        exit:{noproc, _} ->
+            {error, noproc}
+    end.
+
+-spec update_user_context( pid(), fun( (term()) -> term() ) ) -> ok | {error, noproc}.
+update_user_context(Pid, Fun) ->
+    try
+        gen_server:call(Pid, {update_user_context, Fun}, infinity)
+    catch
+        exit:{noproc, _} ->
+            {error, noproc}
+    end.
+
+
 -spec kill( pid() ) -> ok.
 kill(Pid) ->
     gen_server:cast(Pid, kill).
@@ -157,6 +189,14 @@ handle_call(fetch_queue, _From, #state{ pending_connack = undefined } = State) -
     {reply, {ok, encode(Qs)}, State#state{ pending = queue:new() }};
 handle_call(fetch_queue, _From, #state{ pending_connack = ConnAck } = State) ->
     {reply, {ok, encode([ ConnAck ])}, State#state{ pending_connack = undefined }};
+
+handle_call(get_user_context, _From, #state{ user_context = UserContext } = State) ->
+    {reply, {ok, UserContext}, State};
+handle_call({set_user_context, UserContext}, _From, State) ->
+    {reply, ok, State#state{ user_context = UserContext }};
+handle_call({update_user_context, Fun}, _From, #state{ user_context = UserContext} = State) ->
+    {reply, ok, State#state{ user_context = Fun(UserContext) }};
+
 handle_call(Cmd, _From, State) ->
     {stop, {unknown_cmd, Cmd}, State}.
 

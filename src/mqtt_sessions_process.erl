@@ -726,7 +726,7 @@ cleanup_state_disconnected(State) ->
         pending_connack = undefined,
         is_connected = false,
         transport = undefined,
-        awaiting_rel = {}
+        awaiting_rel = #{}
     }).
 
 

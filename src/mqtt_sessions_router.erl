@@ -196,7 +196,7 @@ handle_call(Cmd, _From, State) ->
 handle_cast(Cmd, State) ->
     {stop, {unknown_cmd, Cmd}, State}.
 
-handle_info({'DOWN', _Mref, Pid, process, _Reason}, State) ->
+handle_info({'DOWN', _Mref, process, Pid, _Reason}, State) ->
     {noreply, remove_subscriber(Pid, State)};
 handle_info(_Info, State) ->
     {noreply, State}.

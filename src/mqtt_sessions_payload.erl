@@ -109,14 +109,21 @@ encode_json(null) -> undefined;
 encode_json(true) -> <<"true">>;
 encode_json(false) -> <<"false">>;
 encode_json({struct, _} = MochiJson) -> jsx:encode(mochijson_to_map(MochiJson));
-encode_json(Term) -> jsx:encode(Term).
+encode_json(Term) ->
+    case application:get_env(mqtt_sessions, json_encoder) of
+        {ok, Encoder} when Encoder =/= jsx -> Encoder:encode(Term);
+        undefined -> jsx:encode(Term)
+    end.
 
 decode_json(<<>>) -> undefined;
 decode_json(<<"null">>) -> undefined;
 decode_json(<<"true">>) -> true;
 decode_json(<<"false">>) -> false;
-decode_json(B) -> jsx:decode(B, [return_maps]).
-
+decode_json(B) ->
+    case application:get_env(mqtt_sessions, json_encoder) of
+        {ok, Encoder} when Encoder =/= jsx -> Encoder:decode(B);
+        undefined -> jsx:decode(B, [return_maps])
+    end.
 
 mochijson_to_map({struct, L}) ->
     maps:from_list([ mochijson_to_map(V) || V <- L ]);

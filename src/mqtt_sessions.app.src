@@ -9,7 +9,8 @@
         mqtt_packet_map
     ]},
     {env, [
-        {runtime, mqtt_sessions_runtime}
+        {runtime, mqtt_sessions_runtime},
+        {json_encoder, jsx}
     ]},
     {modules, []},
     {maintainers, ["Zotonic Team"]},

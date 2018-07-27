@@ -53,6 +53,10 @@
     unsubscribe/2,
     unsubscribe/3,
 
+    temp_response_topic/1,
+    temp_response_topic/2,
+    await_response/1,
+
     incoming_message/3,
     incoming_message/4,
     connect_transport/2,
@@ -67,8 +71,14 @@
 
 -type session_ref() :: pid() | binary().
 -type opt_session_ref() :: session_ref() | undefined.
--type msg_options() :: list( msg_option() ).
--type msg_option() :: {transport, pid()}.
+-type msg_options() :: #{
+        transport => pid(),
+        peer_ip => tuple() | undefined
+    }.
+-type session_options() :: #{
+        routing_id := binary(),
+        peer_ip => tuple() | undefined
+    }.
 -type mqtt_msg() :: mqtt_sessions_router:mqtt_msg().
 -type subscriber() :: mqtt_sessions_router:subscriber().
 -type subscriber_options() :: mqtt_sessions_router:subscriber_options().
@@ -78,7 +88,7 @@
 -export_type([
     session_ref/0,
     msg_options/0,
-    msg_option/0,
+    session_options/0,
     mqtt_msg/0,
     subscriber/0,
     subscriber_options/0,
@@ -86,6 +96,7 @@
 ]).
 
 -define(SIDEJOBS_PER_SESSION, 20).
+-define(DEFAULT_CALL_TIMEOUT, 5000).
 
 -include("../include/mqtt_sessions.hrl").
 
@@ -174,7 +185,7 @@ publish(Pool, #{ type := publish, topic := Topic } = Msg, UserContext) when is_a
         false ->
             {error, eacces}
     end;
-publish(Topic, Payload, UserContext) when is_list(Topic), is_binary(Topic) ->
+publish(Topic, Payload, UserContext) when is_list(Topic); is_binary(Topic) ->
     publish(?MQTT_SESSIONS_DEFAULT, Topic, Payload, #{}, UserContext).
 
 -spec publish( atom(), topic(), term(), term() ) -> ok | {error, eacces}.
@@ -236,10 +247,81 @@ unsubscribe(Pool, TopicFilter, OwnerPid) ->
     mqtt_sessions_router:unsubscribe(Pool, TopicFilter1, OwnerPid).
 
 
+-spec temp_response_topic( term() ) -> {ok, topic()} | {error, eacces}.
+temp_response_topic(UserContext) ->
+    temp_response_topic(?MQTT_SESSIONS_DEFAULT, UserContext).
+
+-spec temp_response_topic( atom(), term() ) -> {ok, topic()} | {error, eacces}.
+temp_response_topic(Pool, UserContext) ->
+    case erlang:get(mqtt_session_response_topic) of
+        undefined ->
+            Topic = [ <<"reply">>, <<"call-", (random_key(20))/binary>> ],
+            case subscribe(Pool, Topic ++ [ <<"+">> ], UserContext) of
+                ok ->
+                    erlang:put(mqtt_session_response_topic, Topic),
+                    erlang:put(mqtt_session_response_nr, 0),
+                    {ok, topic_append_unique(Topic)};
+                {error, _} = Error ->
+                    Error
+            end;
+        Topic ->
+            topic_append_unique(Topic)
+    end.
+
+-spec await_response( topic() ) -> {ok, mqtt_packet_map:mqtt_message()} | {error, timeout}.
+await_response( Topic ) ->
+    await_response(?MQTT_SESSIONS_DEFAULT, Topic).
+
+-spec await_response
+    ( topic(), pos_integer() ) -> {ok, mqtt_packet_map:mqtt_message()} | {error, timeout};
+    ( atom(), topic() ) -> {ok, mqtt_packet_map:mqtt_message()} | {error, timeout}.
+
+await_response( Topic, Timeout ) when is_list(Topic), is_integer(Timeout) ->
+    await_response(?MQTT_SESSIONS_DEFAULT, Topic, Timeout);
+await_response( Pool, Topic ) when is_atom(Pool), is_list(Topic) ->
+    await_response(Pool, Topic, ?DEFAULT_CALL_TIMEOUT).
+
+await_response( Pool, Topic, Timeout ) when is_list(Topic), is_atom(Pool), is_integer(Timeout) ->
+    receive
+        {mqtt_msg, #{ type := publish, topic := Topic } = MqttMsg} ->
+            {ok, MqttMsg}
+    after Timeout ->
+        {error, timeout}
+    end.
+
+
 maybe_split_topic(B) when is_binary(B) -> binary:split(B, <<"/">>, [global]);
 maybe_split_topic(L) when is_list(L) -> L.
 
 %%--------------------------------------------------------------------
+
+
+-spec topic_append_unique( topic() ) -> topic().
+topic_append_unique(Topic) ->
+    N = case erlang:get(mqtt_session_response_nr) of
+        undefined -> 0;
+        N0 -> N0+1
+    end,
+    erlang:put(mqtt_session_response_nr, N),
+    Topic ++ [ integer_to_binary(N) ].
+
+%% @doc Generate a random key consisting of numbers and upper and lower case characters.
+-spec random_key( Length::integer() ) -> binary().
+random_key(Len) ->
+    <<
+        <<
+            case N of
+                C when C < 26 -> C  + $a;
+                C when C < 52 -> C - 26 + $A;
+                C -> C - 52 + $0
+            end
+        >>
+        || N <- random_list(Len)
+    >>.
+
+random_list(N) ->
+    [ rand:uniform(62) || _X <- lists:seq(1, N) ].
+
 
 -spec ensure_started(atom()) -> ok | {error, term()}.
 ensure_started(App) ->

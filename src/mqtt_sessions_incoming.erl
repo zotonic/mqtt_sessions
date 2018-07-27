@@ -30,9 +30,12 @@
 %%      If there is no session-ref then the package MUST be a connect package.
 -spec incoming_message( Pool :: atom(), mqtt_sessions:opt_session_ref(), mqtt_packet_map:mqtt_packet(), mqtt_sessions:msg_options() ) ->
         {ok, mqtt_sessions:session_ref()} | {error, term()}.
-incoming_message(Pool, undefined, #{ type := connect, client_id := <<>> } = Msg, Options) ->
-    {ok, {Pid, _ClientId}} = mqtt_sessions_process_sup:new_session(Pool),
-    ok = mqtt_sessions_process:incoming_message(Pid, Msg, Options),
+incoming_message(Pool, undefined, #{ type := connect, client_id := <<>> } = Msg, MsgOptions) ->
+    SessionOptions = #{
+        peer_ip => maps:get(peer_ip, MsgOptions, undefined)
+    },
+    {ok, {Pid, _ClientId}} = mqtt_sessions_process_sup:new_session(Pool, SessionOptions),
+    ok = mqtt_sessions_process:incoming_message(Pid, Msg, MsgOptions),
     {ok, Pid};
 incoming_message(Pool, undefined, #{ type := connect, client_id := ClientId, clean_start := true } = Msg, Options) ->
     % a. Close existing client (if is running)
@@ -67,7 +70,7 @@ incoming_message(_Pool, SessionRef, Msg, Options) when is_pid(SessionRef) ->
 %% @doc Refuse unknown client-ids, as we want to have full control over the client identifiers.
 %%      This is not according to the specs, but we do it out of security concerns.
 maybe_send_connack(Options, Error) ->
-    case proplists:get_value(transport, Options) of
+    case maps:get(transport, Options, undefined) of
         undefined ->
             Error;
         Pid when is_pid(Pid) ->

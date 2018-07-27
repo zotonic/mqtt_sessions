@@ -34,7 +34,7 @@
     kill/1,
     incoming_message/3,
     fetch_queue/1,
-    start_link/2,
+    start_link/3,
     connect_transport/2,
     disconnect_transport/2
     ]).
@@ -131,7 +131,7 @@ kill(Pid) ->
     gen_server:cast(Pid, kill).
 
 -spec incoming_message(pid(), mqtt_packet_map:mqtt_packet(), mqtt_sessions:msg_options()) -> ok.
-incoming_message(Pid, Msg, Options) ->
+incoming_message(Pid, Msg, Options) when is_map(Options) ->
     gen_server:cast(Pid, {incoming, Msg, Options}).
 
 -spec fetch_queue(pid()) -> {ok, list( map() | binary() )}.
@@ -148,25 +148,28 @@ connect_transport(Pid, TransportPid) ->
 disconnect_transport(Pid, TransportPid) ->
     gen_server:call(Pid, {disconnect_transport, TransportPid}, infinity).
 
--spec start_link( Pool::atom(), ClientId::binary() ) -> {ok, pid()}.
-start_link( Pool, ClientId ) ->
-    gen_server:start_link(?MODULE, [ Pool, ClientId ], []).
+-spec start_link( Pool::atom(), ClientId::binary(), mqtt_sessions:session_options() ) -> {ok, pid()}.
+start_link( Pool, ClientId, SessionOptions ) ->
+    gen_server:start_link(?MODULE, [ Pool, ClientId, SessionOptions ], []).
 
 
 % ---------------------------------------------------------------------------------------
 % --------------------------- gen_server functions --------------------------------------
 % ---------------------------------------------------------------------------------------
 
-init([ Pool, ClientId ]) ->
+init([ Pool, ClientId, SessionOptions ]) ->
     RoutingId = mqtt_sessions_registry:routing_id(Pool),
     mqtt_sessions_registry:register(Pool, ClientId, self()),
     {ok, WillPid} = mqtt_sessions_will_sup:start(Pool, self()),
     {ok, Runtime} = application:get_env(mqtt_sessions, runtime),
     erlang:monitor(process, WillPid),
+    SessionOptions1 = SessionOptions#{
+        routing_id => RoutingId
+    },
     {ok, #state{
         pool = Pool,
         runtime = Runtime,
-        user_context = Runtime:new_user_context(Pool, ClientId, RoutingId),
+        user_context = Runtime:new_user_context(Pool, ClientId, SessionOptions1),
         client_id = ClientId,
         routing_id = RoutingId,
         pending = queue:new(),
@@ -659,7 +662,7 @@ relay_publish(#{ type := publish, message := Msg } = MqttMsg, State) ->
             },
             {State3, Msg3}
     end,
-    reply(MsgN, [], StateN).
+    reply(MsgN, #{}, StateN).
 
 
 % ---------------------------------------------------------------------------------------
@@ -697,7 +700,7 @@ resendUnacknowledged(#state{ awaiting_ack = AwaitAck } = State) ->
         AwaitAck),
     lists:foldl(
         fun({_Nr, Msg}, StateAcc) ->
-            reply(Msg, [], StateAcc)
+            reply(Msg, #{}, StateAcc)
         end,
         State,
         lists:sort(Msgs)).
@@ -810,7 +813,7 @@ encode(Ms) when is_list(Ms) ->
 %% @doc Select the transport for sending a message (if any).
 %%      If there was another transport connected, then disconnect that one.
 select_transport(Options, #state{ transport = Transport } = State) ->
-    case proplists:get_value(transport, Options, Transport) of
+    case maps:get(transport, Options, Transport) of
         Transport ->
             State;
         Pid when is_pid(Pid), is_pid(Transport) ->

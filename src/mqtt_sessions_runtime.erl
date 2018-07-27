@@ -29,7 +29,7 @@
 -type topic() :: list( binary() ).
 
 
--callback new_user_context( atom(), binary() ) -> term().
+-callback new_user_context( atom(), binary(), mqtt_sessions:session_options() ) -> term().
 -callback connect( mqtt_packet_map:mqtt_packet(), user_context()) -> {ok, mqtt_packet_map:mqtt_packet(), user_context()} | {error, term()}.
 -callback reauth( mqtt_packet_map:mqtt_packet(), user_context()) -> {ok, mqtt_packet_map:mqtt_packet(), user_context()} | {error, term()}.
 -callback is_allowed( publish | subscribe, topic(), mqtt_packet_map:mqtt_packet(), user_context()) -> boolean().
@@ -46,12 +46,13 @@
 % TODO: check authentication credentials
 % TODO: if reconnect, check against previous credentials (MUST be the same)
 
--spec new_user_context( atom(), binary(), binary() ) -> term().
-new_user_context( Pool, ClientId, RoutingId ) ->
+-spec new_user_context( atom(), binary(), mqtt_sessions:session_options() ) -> term().
+new_user_context( Pool, ClientId, Options ) ->
     #{
         pool => Pool,
         client_id => ClientId,
-        routing_id => RoutingId,
+        routing_id => maps:get(routing_id, Options, undefined),
+        peer_ip => maps:get(peer_ip, Options, undefined),
         user => undefined
     }.
 
@@ -72,9 +73,9 @@ connect(#{ type := connect, username := U, password := P }, UserContext) when no
         reason_code => ?MQTT_RC_SUCCESS
     },
     {ok, ConnAck, UserContext#{ user => U }};
-connect(#{ type := connect, properties := #{ authentication_method := AuthMethod } = Props }, UserContext) ->
+connect(#{ type := connect, properties := #{ authentication_method := _AuthMethod } = Props }, UserContext) ->
     % User logs on using extended authentication method
-    AuthData = maps:get(authentication_data, Props, undefined),
+    _AuthData = maps:get(authentication_data, Props, undefined),
     % ... handle extended authentication handshake
     ConnAck = #{
         type => connack,

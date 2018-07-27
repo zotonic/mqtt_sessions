@@ -5,6 +5,7 @@
     {mod, {mqtt_sessions, []}},
     {applications, [
         kernel, stdlib, crypto,
+        sidejob,
         router,
         mqtt_packet_map
     ]},

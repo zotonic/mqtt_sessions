@@ -22,17 +22,17 @@
 -behaviour(supervisor).
 
 -export([
-    new_session/1,
+    new_session/2,
     start_link/1,
     init/1,
     name/1
     ]).
 
 
--spec new_session( atom() ) -> {ok, binary()}.
-new_session(Pool) ->
+-spec new_session( atom(), mqtt_sessions:session_options() ) -> {ok, binary()}.
+new_session(Pool, SessionOptions) ->
     ClientId = mqtt_sessions_registry:client_id(Pool),
-    {ok, Pid} = supervisor:start_child(name(Pool), [ ClientId ]),
+    {ok, Pid} = supervisor:start_child(name(Pool), [ ClientId, SessionOptions ]),
     {ok, {Pid, ClientId}}.
 
 -spec start_link( atom() ) -> {ok, pid()} | {error, term()}.

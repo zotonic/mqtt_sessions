@@ -1,8 +1,8 @@
 %% @doc MQTT sessions runtime ACL interface.
 %% @author Marc Worrell <marc@worrell.nl>
-%% @copyright 2018 Marc Worrell
+%% @copyright 2018-2019 Marc Worrell
 
-%% Copyright 2018 Marc Worrell
+%% Copyright 2018-2019 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -22,7 +22,8 @@
     new_user_context/3,
     connect/2,
     reauth/2,
-    is_allowed/4
+    is_allowed/4,
+    is_valid_message/3
     ]).
 
 -type user_context() :: term().
@@ -30,9 +31,10 @@
 
 
 -callback new_user_context( atom(), binary(), mqtt_sessions:session_options() ) -> term().
--callback connect( mqtt_packet_map:mqtt_packet(), user_context()) -> {ok, mqtt_packet_map:mqtt_packet(), user_context()} | {error, term()}.
--callback reauth( mqtt_packet_map:mqtt_packet(), user_context()) -> {ok, mqtt_packet_map:mqtt_packet(), user_context()} | {error, term()}.
+-callback connect( mqtt_packet_map:mqtt_packet(), user_context() ) -> {ok, mqtt_packet_map:mqtt_packet(), user_context()} | {error, term()}.
+-callback reauth( mqtt_packet_map:mqtt_packet(), user_context() ) -> {ok, mqtt_packet_map:mqtt_packet(), user_context()} | {error, term()}.
 -callback is_allowed( publish | subscribe, topic(), mqtt_packet_map:mqtt_packet(), user_context()) -> boolean().
+-callback is_valid_message( mqtt_packet_map:mqtt_packet(), mqtt_sessions:msg_options(), user_context() ) -> boolean().
 
 -export_type([
     user_context/0,
@@ -91,7 +93,7 @@ connect(_Packet, UserContext) ->
     {ok, ConnAck, UserContext}.
 
 
-%% @spec Re-authentication. This is called when the client requests a re-authentication (or replies in a AUTH re-authentication).
+%% @doc Re-authentication. This is called when the client requests a re-authentication (or replies in a AUTH re-authentication).
 -spec reauth( mqtt_packet_map:mqtt_packet(), user_context()) -> {ok, mqtt_packet_map:mqtt_packet(), user_context()} | {error, term()}.
 reauth(#{ type := auth }, _UserContext) ->
     {error, notsupported}.
@@ -101,5 +103,11 @@ reauth(#{ type := auth }, _UserContext) ->
 is_allowed(publish, _Topic, _Packet, _UserContext) ->
     true;
 is_allowed(subscribe, _Topic, _Packet, _UserContext) ->
+    true.
+
+
+%% @doc Check a message and its options before it is processed. Used for http connections with authentication cookies.
+-spec is_valid_message( mqtt_packet_map:mqtt_packet(), mqtt_sessions:msg_options(), user_context() ) -> boolean().
+is_valid_message(_Msg, _Options, _UserContext) ->
     true.
 

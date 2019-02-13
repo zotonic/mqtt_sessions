@@ -73,11 +73,13 @@
 -type opt_session_ref() :: session_ref() | undefined.
 -type msg_options() :: #{
         transport => pid(),
-        peer_ip => tuple() | undefined
+        peer_ip => tuple() | undefined,
+        auth_user_id => term()
     }.
 -type session_options() :: #{
         routing_id := binary(),
-        peer_ip => tuple() | undefined
+        peer_ip => tuple() | undefined,
+        auth_user_id => term()
     }.
 -type mqtt_msg() :: mqtt_sessions_router:mqtt_msg().
 -type subscriber() :: mqtt_sessions_router:subscriber().

@@ -1,9 +1,9 @@
 %% @doc Process handling one single MQTT session.
 %%      Transports attaches and detaches from this session.
 %% @author Marc Worrell <marc@worrell.nl>
-%% @copyright 2018 Marc Worrell
+%% @copyright 2018-2019 Marc Worrell
 
-%% Copyright 2018 Marc Worrell
+%% Copyright 2018-2019 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -204,7 +204,7 @@ handle_call(Cmd, _From, State) ->
     {stop, {unknown_cmd, Cmd}, State}.
 
 handle_cast({incoming, Msg, Options}, State) ->
-    case handle_incoming(Msg, Options, State) of
+    case handle_incoming_context(Msg, Options, State) of
         {ok, State1} ->
             {noreply, State1#state{ keep_alive_counter = 3 }};
         {stop, State1} ->
@@ -274,6 +274,13 @@ terminate(_Reason, _State) ->
 % ----------------------------- support functions ---------------------------------------
 % ---------------------------------------------------------------------------------------
 
+handle_incoming_context(Msg, Options, #state{ runtime = Runtime, user_context = UserContext } = State) ->
+    case Runtime:is_valid_message(Msg, Options, UserContext) of
+        true ->
+            handle_incoming(Msg, Options, State);
+        false ->
+            {stop, State}
+    end.
 
 handle_incoming(#{ type := connect } = Msg, Options, #state{ is_connected = false } = State) ->
     connect(Msg, Options, State);

@@ -94,6 +94,8 @@ guess_mime({{Y,M,D},{H,I,S}}) when
     is_integer(H), is_integer(I), is_integer(S),
     M >= 1, M =< 12, D >= 1, D =< 31 ->
     <<"text/x-datetime">>;
+guess_mime(T) when is_tuple(T), is_atom(element(1, T)) ->
+    <<"application/json">>;
 guess_mime(X) ->
     lager:info("MQTT payload unknown type for guess_mime: ~p", [X]),
     <<"binary/octet-stream">>.

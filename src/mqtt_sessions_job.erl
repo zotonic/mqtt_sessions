@@ -39,7 +39,8 @@ publish(Pool, Topic, Routes, Msg, PublisherContext) ->
         {?MODULE, publish_job, [ Pool, Topic, Routes, Msg, PublisherContext, self() ]})
     of
         {ok, JobPid} ->
-            self() ! {publish_job, JobPid};
+            self() ! {publish_job, JobPid},
+            ok;
         {error, overload} ->
             lager:debug("MQTT sidejob overload, delaying job ~p ...", [ Topic ]),
             timer:sleep(100),

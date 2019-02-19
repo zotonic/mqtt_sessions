@@ -82,7 +82,8 @@ publish( Pool, Topic, Msg ) ->
     publish(Pool, Topic, Msg, undefined).
 
 -spec publish( atom(), list(), mqtt_packet_map:mqtt_message(), term() ) -> ok.
-publish( Pool, Topic, Msg, PublisherContext ) ->
+publish( Pool, Topic0, Msg, PublisherContext ) ->
+    Topic = publish_topic(Topic0),
     Routes = router:route(Pool, Topic),
     mqtt_sessions_job:publish(Pool, Topic, Routes, Msg, PublisherContext),
     case maps:get(retain, Msg, false) of
@@ -158,7 +159,7 @@ init([ Pool ]) ->
 
 handle_call({subscribe, TopicFilter0, Subscriber, OwnerPid, Options}, _From,
             #state{ router = Router, monitors = Monitors } = State) ->
-    TopicFilter = map_wildcards(TopicFilter0),
+    TopicFilter = subscribe_topic(TopicFilter0),
     Current = maps:get(OwnerPid, Monitors, []),
     {Current1, IsNew} = case lists:keysearch(TopicFilter, 1, Current) of
         {value, {_Filter, PrevSubscriber}} ->
@@ -179,7 +180,7 @@ handle_call({subscribe, TopicFilter0, Subscriber, OwnerPid, Options}, _From,
     {reply, {ok, IsNew}, State#state{ monitors = Monitors1 }};
 handle_call({unsubscribe, TopicFilter0, Pid}, _From,
             #state{ router = Router, monitors = Monitors } = State) ->
-    TopicFilter = map_wildcards(TopicFilter0),
+    TopicFilter = subscribe_topic(TopicFilter0),
     Subs = maps:get(Pid, Monitors, []),
     case lists:keysearch(TopicFilter, 1, Subs) of
         {value, {_Filter, Destination}} ->
@@ -212,14 +213,27 @@ terminate(_Reason, _State) ->
 % ---------------------------------------------------------------------------------------
 
 
-map_wildcards(TopicFilter) ->
+subscribe_topic(TopicFilter) ->
     lists:map(
         fun
+            ('#') -> '#';
+            ('+') -> '+';
             (<<"#">>) -> '#';
             (<<"+">>) -> '+';
-            (T) -> T
+            (T) when is_integer(T) -> integer_to_binary(T);
+            (T) when is_binary(T) -> T;
+            (T) when is_atom(T) -> atom_to_binary(T, utf8)
         end,
         TopicFilter).
+
+publish_topic(Topic) ->
+    lists:map(
+        fun
+            (T) when is_integer(T) -> integer_to_binary(T);
+            (T) when is_binary(T) -> T;
+            (T) when is_atom(T) -> atom_to_binary(T, utf8)
+        end,
+        Topic).
 
 
 %% @doc Remove all subscriptions belonging to a certain process

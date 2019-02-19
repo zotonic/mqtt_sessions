@@ -588,7 +588,8 @@ pubcomp(#{ packet_id := PacketId }, _Options, #state{ awaiting_ack = WaitAck } =
 %% @doc Handle a subscribe request
 subscribe(#{ topics := Topics } = Msg, Options, #state{ runtime = Runtime, user_context = UCtx } = State) ->
     Resp = lists:map(
-        fun(#{ topic := TopicFilter } = Sub) ->
+        fun(#{ topic := TopicFilter0 } = Sub) ->
+            TopicFilter = mqtt_sessions:normalize_topic(TopicFilter0),
             case Runtime:is_allowed(subscribe, TopicFilter, Msg, State#state.user_context) of
                 true ->
                     QoS = maps:get(qos, Sub, 0),

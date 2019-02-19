@@ -65,7 +65,9 @@
     disconnect_transport/3,
 
     sidejobs_limit/0,
-    sidejobs_per_session/0
+    sidejobs_per_session/0,
+
+    normalize_topic/1
     ]).
 
 
@@ -85,7 +87,7 @@
 -type subscriber() :: mqtt_sessions_router:subscriber().
 -type subscriber_options() :: mqtt_sessions_router:subscriber_options().
 
--type topic() :: list(binary()) | binary().
+-type topic() :: list(binary() | integer() | '+' | '#') | binary().
 
 -export_type([
     session_ref/0,
@@ -199,7 +201,7 @@ publish(Pool, Topic, Payload, Options, UserContext) ->
     Msg = #{
         type => publish,
         payload => Payload,
-        topic => maybe_split_topic(Topic),
+        topic => normalize_topic(Topic),
         qos => maps:get(qos, Options, 0),
         retain => maps:get(retain, Options, false),
         properties => maps:get(properties, Options, #{})
@@ -224,7 +226,7 @@ subscribe(Pool, TopicFilter, Pid, UserContext) when is_pid(Pid) ->
 -spec subscribe( atom(), topic(), pid()|mfa(), pid(), map(), term() ) -> ok | {error, eacces}.
 subscribe(Pool, TopicFilter, Receiver, OwnerPid, Options, UserContext) ->
     Runtime = runtime(),
-    Topic1 = maybe_split_topic(TopicFilter),
+    Topic1 = normalize_topic(TopicFilter),
     case Runtime:is_allowed(subscribe, Topic1, #{}, UserContext) of
         true ->
             SubOpts = #{
@@ -245,7 +247,7 @@ unsubscribe(Pool, TopicFilter) ->
 
 -spec unsubscribe( atom(), topic(), pid() ) -> ok | {error, notfound}.
 unsubscribe(Pool, TopicFilter, OwnerPid) ->
-    TopicFilter1 = maybe_split_topic(TopicFilter),
+    TopicFilter1 = normalize_topic(TopicFilter),
     mqtt_sessions_router:unsubscribe(Pool, TopicFilter1, OwnerPid).
 
 
@@ -292,8 +294,16 @@ await_response( Pool, Topic, Timeout ) when is_list(Topic), is_atom(Pool), is_in
     end.
 
 
-maybe_split_topic(B) when is_binary(B) -> binary:split(B, <<"/">>, [global]);
-maybe_split_topic(L) when is_list(L) -> L.
+normalize_topic(B) when is_binary(B) ->
+    binary:split(B, <<"/">>, [global]);
+normalize_topic(L) when is_list(L) ->
+    lists:map(fun normalize_topic_part/1, L).
+
+normalize_topic_part(<<"+">>) -> '+';
+normalize_topic_part(<<"#">>) -> '#';
+normalize_topic_part(T) when is_integer(T) -> T;
+normalize_topic_part(T) when is_binary(T) -> T;
+normalize_topic_part(T) -> z_convert:to_binary(T).
 
 %%--------------------------------------------------------------------
 

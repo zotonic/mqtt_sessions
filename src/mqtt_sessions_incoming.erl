@@ -33,13 +33,9 @@
 incoming_message(Pool, undefined, #{ type := connect, client_id := <<>> } = Msg, MsgOptions) ->
     SessionOptions = #{
         peer_ip => maps:get(peer_ip, MsgOptions, undefined),
-        auth_user_id => maps:get(auth_user_id, MsgOptions, undefined)
+        context_prefs => maps:get(context_prefs, MsgOptions, #{})
     },
-    SessionOptions1 = case MsgOptions of
-        #{ auth_user_id := AuthUserId } -> SessionOptions#{ auth_user_id => AuthUserId };
-        #{} -> SessionOptions
-    end,
-    {ok, {Pid, _ClientId}} = mqtt_sessions_process_sup:new_session(Pool, SessionOptions1),
+    {ok, {Pid, _ClientId}} = mqtt_sessions_process_sup:new_session(Pool, SessionOptions),
     ok = mqtt_sessions_process:incoming_message(Pid, Msg, MsgOptions),
     {ok, Pid};
 incoming_message(Pool, undefined, #{ type := connect, client_id := ClientId, clean_start := true } = Msg, Options) ->

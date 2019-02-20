@@ -76,12 +76,12 @@
 -type msg_options() :: #{
         transport => pid(),
         peer_ip => tuple() | undefined,
-        auth_user_id => term()
+        context_prefs => map()
     }.
 -type session_options() :: #{
         routing_id := binary(),
         peer_ip => tuple() | undefined,
-        auth_user_id => term()
+        context_prefs => map()
     }.
 -type mqtt_msg() :: mqtt_sessions_router:mqtt_msg().
 -type subscriber() :: mqtt_sessions_router:subscriber().

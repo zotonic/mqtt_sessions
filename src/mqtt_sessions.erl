@@ -56,6 +56,7 @@
     temp_response_topic/1,
     temp_response_topic/2,
     await_response/1,
+    await_response/2,
 
     incoming_message/3,
     incoming_message/4,

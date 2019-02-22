@@ -185,7 +185,10 @@ publish(Pool, #{ type := publish, topic := Topic } = Msg, UserContext) when is_a
     Runtime = runtime(),
     case Runtime:is_allowed(publish, Topic, Msg, UserContext) of
         true ->
-            mqtt_sessions_router:publish(Pool, Topic, Msg, UserContext);
+            case mqtt_sessions_router:publish(Pool, Topic, Msg, UserContext) of
+                {ok, _Pid} -> ok;
+                {error, _} = Error -> Error
+            end;
         false ->
             {error, eacces}
     end;

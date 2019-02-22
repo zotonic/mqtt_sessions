@@ -77,20 +77,24 @@
 -include_lib("../include/mqtt_sessions.hrl").
 
 
--spec publish( atom(), list(), mqtt_packet_map:mqtt_message() ) -> ok.
+-spec publish( atom(), list(), mqtt_packet_map:mqtt_message() ) -> {ok, pid() | undefined}.
 publish( Pool, Topic, Msg ) ->
     publish(Pool, Topic, Msg, undefined).
 
--spec publish( atom(), list(), mqtt_packet_map:mqtt_message(), term() ) -> ok.
+-spec publish( atom(), list(), mqtt_packet_map:mqtt_message(), term() ) -> {ok, pid() | undefined}.
 publish( Pool, Topic0, Msg, PublisherContext ) ->
     Topic = publish_topic(Topic0),
     Routes = router:route(Pool, Topic),
-    mqtt_sessions_job:publish(Pool, Topic, Routes, Msg, PublisherContext),
-    case maps:get(retain, Msg, false) of
-        true -> mqtt_sessions_retain:retain(Pool, Msg, PublisherContext);
-        false -> ok
-    end,
-    ok.
+    case mqtt_sessions_job:publish(Pool, Topic, Routes, Msg, PublisherContext) of
+        {ok, JobPid} ->
+            case maps:get(retain, Msg, false) of
+                true -> mqtt_sessions_retain:retain(Pool, Msg, PublisherContext);
+                false -> ok
+            end,
+            {ok, JobPid};
+        {error, _} = Error ->
+            Error
+    end.
 
 
 -spec subscribe( atom(), list(), subscriber(), term() ) -> ok | {error, invalid_subscriber}.

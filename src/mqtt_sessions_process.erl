@@ -407,7 +407,8 @@ publish(#{ topic := Topic, qos := 0 } = Msg, _Options,
     case Runtime:is_allowed(publish, Topic, Msg, UCtx) of
         true ->
             MsgPub = mqtt_sessions_payload:decode(Msg#{ dup => false }),
-            ok = mqtt_sessions_router:publish(State#state.pool, Topic, MsgPub, UCtx);
+            {ok, JobPid} = mqtt_sessions_router:publish(State#state.pool, Topic, MsgPub, UCtx),
+            self() ! {publish_job, JobPid};
         false ->
             ok
     end,
@@ -436,7 +437,8 @@ publish(#{ topic := Topic, qos := 1, dup := Dup, packet_id := PacketId } = Msg, 
             RC = case Runtime:is_allowed(publish, Topic, Msg, UCtx) of
                 true ->
                     MsgPub = mqtt_sessions_payload:decode(Msg#{ dup => false }),
-                    ok = mqtt_sessions_router:publish(State#state.pool, Topic, MsgPub, UCtx),
+                    {ok, JobPid} = mqtt_sessions_router:publish(State#state.pool, Topic, MsgPub, UCtx),
+                    self() ! {publish_job, JobPid},
                     ?MQTT_RC_SUCCESS;
                 false ->
                     ?MQTT_RC_NOT_AUTHORIZED
@@ -471,7 +473,8 @@ publish(#{ topic := Topic, qos := 2, dup := Dup, packet_id := PacketId } = Msg, 
             RC = case Runtime:is_allowed(publish, Topic, Msg, UCtx) of
                 true ->
                     MsgPub = mqtt_sessions_payload:decode(Msg#{ dup => false }),
-                    ok = mqtt_sessions_router:publish(State#state.pool, Topic, MsgPub, UCtx),
+                    {ok, JobPid} = mqtt_sessions_router:publish(State#state.pool, Topic, MsgPub, UCtx),
+                    self() ! {publish_job, JobPid},
                     ?MQTT_RC_SUCCESS;
                 false ->
                     ?MQTT_RC_NOT_AUTHORIZED

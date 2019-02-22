@@ -30,17 +30,16 @@
 -include_lib("router/include/router.hrl").
 -include_lib("../include/mqtt_sessions.hrl").
 
--spec publish( atom(), mqtt_sessions:topic(), list(), mqtt_packet_map:mqtt_message(), term()) -> ok | {error, overload}.
+-spec publish( atom(), mqtt_sessions:topic(), list(), mqtt_packet_map:mqtt_message(), term()) -> {ok, pid() | undefined} | {error, overload}.
 publish(_Pool, _Topic, [], _Msg, _PublisherContext) ->
-    ok;
+    {ok, undefined};
 publish(Pool, Topic, Routes, Msg, PublisherContext) ->
     case sidejob_supervisor:spawn(
         ?MQTT_SESSIONS_JOBS,
         {?MODULE, publish_job, [ Pool, Topic, Routes, Msg, PublisherContext, self() ]})
     of
-        {ok, JobPid} ->
-            self() ! {publish_job, JobPid},
-            ok;
+        {ok, _JobPid} = OK ->
+            OK;
         {error, overload} ->
             lager:debug("MQTT sidejob overload, delaying job ~p ...", [ Topic ]),
             timer:sleep(100),

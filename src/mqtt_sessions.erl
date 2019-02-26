@@ -262,18 +262,18 @@ temp_response_topic(UserContext) ->
 -spec temp_response_topic( atom(), term() ) -> {ok, topic()} | {error, eacces}.
 temp_response_topic(Pool, UserContext) ->
     case erlang:get(mqtt_session_response_topic) of
-        undefined ->
+        {Pool, Topic} ->
+            {ok, topic_append_unique(Topic)};
+        _ ->
             Topic = [ <<"reply">>, <<"call-", (random_key(20))/binary>> ],
             case subscribe(Pool, Topic ++ [ <<"+">> ], UserContext) of
                 ok ->
-                    erlang:put(mqtt_session_response_topic, Topic),
+                    erlang:put(mqtt_session_response_topic, {Pool, Topic}),
                     erlang:put(mqtt_session_response_nr, 0),
                     {ok, topic_append_unique(Topic)};
                 {error, _} = Error ->
                     Error
-            end;
-        Topic ->
-            {ok, topic_append_unique(Topic)}
+            end
     end.
 
 -spec await_response( topic() ) -> {ok, mqtt_packet_map:mqtt_message()} | {error, timeout}.

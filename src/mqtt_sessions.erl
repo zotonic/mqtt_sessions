@@ -273,7 +273,7 @@ temp_response_topic(Pool, UserContext) ->
                     Error
             end;
         Topic ->
-            topic_append_unique(Topic)
+            {ok, topic_append_unique(Topic)}
     end.
 
 -spec await_response( topic() ) -> {ok, mqtt_packet_map:mqtt_message()} | {error, timeout}.

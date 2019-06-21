@@ -194,14 +194,14 @@ do_cleanup(Topics, Messages) ->
 
 
 match([], []) -> true;
-match(_, [ <<"#">> ]) -> true;
-match([ _ | Topic ], [ <<"+">> | Filter ]) -> match(Topic, Filter);
+match(_, [ '#' ]) -> true;
+match([ _ | Topic ], [ '+' | Filter ]) -> match(Topic, Filter);
 match([ A | Topic ], [ A | Filter ]) -> match(Topic, Filter);
 match(_, _) -> false.
 
 is_wildcard([]) -> false;
-is_wildcard([ <<"+">> | _ ]) -> true;
-is_wildcard([ <<"#">> ]) -> true;
+is_wildcard([ '+' | _ ]) -> true;
+is_wildcard([ '#' ]) -> true;
 is_wildcard([ _ | T ]) -> is_wildcard(T).
 
 -spec name( atom() ) -> atom().

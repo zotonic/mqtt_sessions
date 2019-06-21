@@ -129,9 +129,9 @@ bind(Path, Match) ->
 
 bind([], [], Acc) ->
     lists:reverse(Acc);
-bind(P, [<<"#">>], Acc) ->
+bind(P, [ '#' ], Acc) ->
     lists:reverse([{'#', P}|Acc]);
-bind([H|Path], [<<"+">>|Match], Acc) ->
+bind([H|Path], [ '+' | Match ], Acc) ->
     bind(Path, Match, [H|Acc]);
-bind([_|Path], [_|Match], Acc) ->
+bind([_|Path], [ _ | Match ], Acc) ->
     bind(Path, Match, Acc).

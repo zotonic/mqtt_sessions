@@ -22,16 +22,18 @@
 -behaviour(supervisor).
 
 -export([
-    new_session/2,
+    new_session/3,
     start_link/1,
     init/1,
     name/1
     ]).
 
 
--spec new_session( atom(), mqtt_sessions:session_options() ) -> {ok, binary()}.
-new_session(Pool, SessionOptions) ->
+-spec new_session( atom(), binary(), mqtt_sessions:session_options() ) -> {ok, {pid(), binary()}}.
+new_session(Pool, <<>>, SessionOptions) ->
     ClientId = mqtt_sessions_registry:client_id(Pool),
+    new_session(Pool, ClientId, SessionOptions);
+new_session(Pool, ClientId, SessionOptions) when is_binary(ClientId) ->
     {ok, Pid} = supervisor:start_child(name(Pool), [ ClientId, SessionOptions ]),
     {ok, {Pid, ClientId}}.
 

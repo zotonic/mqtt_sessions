@@ -59,12 +59,10 @@
     await_response/2,
     await_response/3,
 
-    incoming_message/3,
-    incoming_message/4,
-    connect_transport/2,
-    connect_transport/3,
-    disconnect_transport/2,
-    disconnect_transport/3,
+    incoming_connect/2,
+    incoming_connect/3,
+
+    incoming_data/2,
 
     sidejobs_limit/0,
     sidejobs_per_session/0,
@@ -74,7 +72,6 @@
 
 
 -type session_ref() :: pid() | binary().
--type opt_session_ref() :: session_ref() | undefined.
 -type msg_options() :: #{
         transport => pid(),
         peer_ip => tuple() | undefined,
@@ -377,46 +374,32 @@ set_runtime(Runtime) ->
     application:set_env(mqtt_sessions, runtime, Runtime).
 
 
-%% @doc Handle an incoming message using the default pool.
--spec incoming_message( opt_session_ref(), mqtt_packet_map:mqtt_packet(), msg_options() ) -> {ok, session_ref()} | {error, term()}.
-incoming_message(OptSessionRef, Packet, Options) ->
-    incoming_message(?MQTT_SESSIONS_DEFAULT, OptSessionRef, Packet, Options).
+%% @doc Stream the connect message - connect a MQTT session or return an error
+-spec incoming_connect( binary(), msg_options() ) -> {ok, {session_ref(), binary()}} | {error, incomplete_packet} | {error, term()}.
+incoming_connect(MsgBin, Options) ->
+    incoming_connect(?MQTT_SESSIONS_DEFAULT, MsgBin, Options).
 
-%% @doc Handle an incoming message using the default pool.
--spec incoming_message( atom(), opt_session_ref(), mqtt_packet_map:mqtt_packet(), msg_options() ) -> {ok, session_ref()} | {error, term()}.
-incoming_message(Pool, OptSessionRef, Packet, Options) ->
-    mqtt_sessions_incoming:incoming_message(Pool, OptSessionRef, Packet, Options).
-
-
-%% @doc Connect an outgoing transport to the session using the default pool
--spec connect_transport( session_ref(), pid() ) -> ok | {error, term()}.
-connect_transport(ClientId, Pid) ->
-    connect_transport(?MQTT_SESSIONS_DEFAULT, ClientId, Pid).
-
-%% @doc Connect an outgoing transport to the session
--spec connect_transport( atom(), session_ref(), pid() ) -> ok | {error, term()}.
-connect_transport(Pool, ClientId, Pid) when is_binary(ClientId) ->
-    case mqtt_sessions_registry:find_session(Pool, ClientId) of
-        {ok, SessionPid} ->
-            mqtt_sessions_process:connect_transport(SessionPid, Pid);
+%% @doc Stream the connect message - connect a MQTT session or return an error
+-spec incoming_connect( atom(), binary(), msg_options() ) -> {ok, {session_ref(), binary()}} | {error, incomplete_packet} | {error, term()}.
+incoming_connect(Pool, MsgBin, Options) ->
+    case mqtt_packet_map:decode(MsgBin) of
+        {ok, {#{ type := connect } = Packet, Rest}} ->
+            case mqtt_sessions_incoming:incoming_connect(Pool, Packet, Options#{ connection_pid => self() }) of
+                {ok, SessionRef} ->
+                    {ok, {SessionRef, Rest}};
+                {error, _} = Error ->
+                    Error
+            end;
+        {ok, {_Msg, _Rest}} ->
+            {error, expect_connect};
         {error, _} = Error ->
             Error
     end.
 
-%% @doc Disconnect an outgoing transport from the session using the default pool
--spec disconnect_transport( session_ref(), pid() ) -> ok | {error, term()}.
-disconnect_transport(ClientId, Pid) ->
-    disconnect_transport(?MQTT_SESSIONS_DEFAULT, ClientId, Pid).
-
-%% @doc Disconnect an outgoing transport from the session
--spec disconnect_transport( atom(), session_ref(), pid() ) -> ok | {error, term()}.
-disconnect_transport(Pool, ClientId, Pid) ->
-    case mqtt_sessions_registry:find_session(Pool, ClientId) of
-        {ok, ClientId} ->
-            mqtt_sessions_process:connect_transport(ClientId, Pid);
-        {error, _} = Error ->
-            Error
-    end.
+%% @doc Handle incoming data for session. Call this after a successful connect. The session will disconnect on an illegal packet.
+-spec incoming_data( session_ref(), binary() ) -> ok | {error, wrong_connection | mqtt_packet_map:decode_error()}. 
+incoming_data(SessionRef, MsgBin) ->
+    mqtt_sessions_process:incoming_data(SessionRef, MsgBin).
 
 
 %% @doc Limit the number of sidejobs for message dispatching.

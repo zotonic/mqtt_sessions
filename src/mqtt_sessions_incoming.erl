@@ -18,7 +18,8 @@
 -module(mqtt_sessions_incoming).
 
 -export([
-    incoming_connect/3
+    incoming_connect/3,
+    send_connack_error/3
 ]).
 
 
@@ -45,27 +46,26 @@ incoming_connect(Pool, #{ type := connect, client_id := ClientId, clean_start :=
         {error, notfound} ->
             start_session(Pool, Msg, Options);
         {error, _} = Error ->
-            send_connack_error(Msg, Options, Error)
+            send_connack_error(?MQTT_RC_ERROR, Msg, Options),
+            Error
     end.
 
 %% @doc The session pool returned an error when trying to map the client-id
-send_connack_error(#{ protocol_version := PV } = Msg, Options, Error) ->
+send_connack_error(ReasonCode, #{ protocol_version := PV } = Msg, Options) ->
     Msg = #{
         type => connack,
-        reason_code => ?MQTT_RC_ERROR
+        reason_code => ReasonCode
     },
     MsgB = mqtt_packet_map:encode(PV, Msg),
     case maps:get(transport, Options, undefined) of
         undefined ->
-            Error;
+            ok;
         Pid when is_pid(Pid) ->
             Pid ! {mqtt_transport, self(), MsgB},
-            Pid ! {mqtt_transport, self(), disconnect},
-            Error;
+            Pid ! {mqtt_transport, self(), disconnect};
         F when is_function(F) ->
             F(self(), MsgB),
-            F(self(), disconnect),
-            Error
+            F(self(), disconnect)
     end.
 
 -spec start_session( atom(), mqtt_packet_map:mqtt_packet(), mqtt_sessions:msg_options() ) -> {ok, pid()}.

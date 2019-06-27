@@ -19,6 +19,9 @@
 -module(mqtt_sessions_runtime).
 
 -export([
+    vhost_pool/1,
+    pool_default/0,
+
     new_user_context/3,
     connect/2,
     reauth/2,
@@ -29,6 +32,8 @@
 -type user_context() :: term().
 -type topic() :: list( binary() ).
 
+-callback vhost_pool( binary() ) -> {ok, atom()} | {error, term()}.
+-callback pool_default() -> {ok, atom()} | {error, term()}.
 
 -callback new_user_context( atom(), binary(), mqtt_sessions:session_options() ) -> term().
 -callback connect( mqtt_packet_map:mqtt_packet(), user_context() ) -> {ok, mqtt_packet_map:mqtt_packet(), user_context()} | {error, term()}.
@@ -44,6 +49,15 @@
 -define(none(A), (A =:= undefined orelse A =:= <<>>)).
 
 -include_lib("mqtt_packet_map/include/mqtt_packet_map.hrl").
+-include("../include/mqtt_sessions.hrl").
+
+-spec vhost_pool( binary() ) -> {ok, atom()} | {error, term()}.
+vhost_pool( _VHost ) ->
+    pool_default().
+
+-spec pool_default() -> {ok, atom()} | {error, term()}.
+pool_default() ->
+    {ok, ?MQTT_SESSIONS_DEFAULT}.
 
 % TODO: check authentication credentials
 % TODO: if reconnect, check against previous credentials (MUST be the same)

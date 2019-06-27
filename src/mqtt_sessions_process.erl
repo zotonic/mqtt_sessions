@@ -876,7 +876,7 @@ disconnect_transport(#state{ transport = Transport } = State) when is_pid(Transp
     Transport ! {mqtt_transport, self(), disconnect},
     State#state{ transport = undefined };
 disconnect_transport(#state{ transport = Transport } = State) when is_function(Transport) ->
-    Transport(self(), disconnect),
+    Transport(disconnect),
     State#state{ transport = undefined }.
 
 reply(undefined, State) ->

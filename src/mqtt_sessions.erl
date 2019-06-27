@@ -102,6 +102,7 @@
 -define(DEFAULT_CALL_TIMEOUT, 5000).
 
 -include("../include/mqtt_sessions.hrl").
+-include_lib("mqtt_packet_map/include/mqtt_packet_map.hrl").
 
 %%====================================================================
 %% API
@@ -377,17 +378,23 @@ set_runtime(Runtime) ->
 %% @doc Stream the connect message - connect a MQTT session or return an error
 -spec incoming_connect( binary(), msg_options() ) -> {ok, {session_ref(), binary()}} | {error, incomplete_packet} | {error, term()}.
 incoming_connect(MsgBin, Options) ->
-    incoming_connect(?MQTT_SESSIONS_DEFAULT, MsgBin, Options).
+    incoming_connect(undefined, MsgBin, Options).
 
 %% @doc Stream the connect message - connect a MQTT session or return an error
 -spec incoming_connect( atom(), binary(), msg_options() ) -> {ok, {session_ref(), binary()}} | {error, incomplete_packet} | {error, term()}.
 incoming_connect(Pool, MsgBin, Options) ->
     case mqtt_packet_map:decode(MsgBin) of
         {ok, {#{ type := connect } = Packet, Rest}} ->
-            case mqtt_sessions_incoming:incoming_connect(Pool, Packet, Options#{ connection_pid => self() }) of
-                {ok, SessionRef} ->
-                    {ok, {SessionRef, Rest}};
+            case connect_pool(Pool, Packet) of
+                {ok, ConnectPool} ->
+                    case mqtt_sessions_incoming:incoming_connect(ConnectPool, Packet, Options#{ connection_pid => self() }) of
+                        {ok, SessionRef} ->
+                            {ok, {SessionRef, Rest}};
+                        {error, _} = Error ->
+                            Error
+                    end;
                 {error, _} = Error ->
+                    mqtt_sessions_incoming:send_connack_error(?MQTT_RC_SERVER_UNAVAILABLE, Packet, Options),
                     Error
             end;
         {ok, {_Msg, _Rest}} ->
@@ -395,6 +402,35 @@ incoming_connect(Pool, MsgBin, Options) ->
         {error, _} = Error ->
             Error
     end.
+
+connect_pool(Pool, Msg) ->
+    Runtime = runtime(),
+    case username_to_pool(Msg) of
+        undefined when Pool =:= undefined ->
+            Runtime:pool_default();
+        undefined ->
+            {ok, Pool};
+        {ok, NewPool} when Pool =:= undefined ->
+            {ok, NewPool};
+        {ok, NewPool} when NewPool =/= Pool ->
+            {error, pool_mismatch};
+        {ok, Pool} ->
+            {ok, Pool};
+        {error, _} = Error ->
+            Error
+    end.
+
+username_to_pool(#{ type := connect, username := Username }) when is_binary(Username) ->
+    Runtime = runtime(),
+    case binary:split(Username, <<":">>) of
+        [VHost, _LocalUsername] ->
+            Runtime:vhost_pool(VHost);
+        _ ->
+            undefined
+    end;
+username_to_pool(_ConnectMsg) ->
+    undefined.
+
 
 %% @doc Handle incoming data for session. Call this after a successful connect. The session will disconnect on an illegal packet.
 -spec incoming_data( session_ref(), binary() ) -> ok | {error, wrong_connection | mqtt_packet_map:decode_error()}. 

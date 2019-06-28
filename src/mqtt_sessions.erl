@@ -67,7 +67,11 @@
     sidejobs_limit/0,
     sidejobs_per_session/0,
 
-    normalize_topic/1
+    normalize_topic/1,
+    validate_topic/1,
+    is_valid_topic/1,
+    flatten_topic/1,
+    is_wildcard_topic/1
     ]).
 
 
@@ -297,16 +301,83 @@ await_response( Pool, Topic, Timeout ) when is_list(Topic), is_atom(Pool), is_in
     end.
 
 
+%%--------------------------------------------------------------------
+
+%% @doc Validate a topic, return the normalized topic if it is a valid topic or topic filter.
+-spec validate_topic( topic() ) -> {ok, topic()} | {error, invalid_topic}.
+validate_topic(T) ->
+    T1 = normalize_topic(T),
+    case is_valid_topic(T1) of
+        true -> {ok, T1};
+        false -> {error, invalid_topic}
+    end.
+
+%% @doc Check if a topic is valid, the topic must have been normalized.
+%%      All topic characters must be utf-8 and topic levels shouldn't contain + and # characters.
+-spec is_valid_topic( list() ) -> boolean().
+is_valid_topic([]) ->
+    true;
+is_valid_topic([ '#' ]) ->
+    true;
+is_valid_topic([ '#' | _ ]) ->
+    false;
+is_valid_topic([ H | T ]) ->
+    case is_valid_topic_part(H) of
+        true -> is_valid_topic(T);
+        false -> false
+    end.
+
+is_valid_topic_part('#') -> true;
+is_valid_topic_part('+') -> true;
+is_valid_topic_part(B) -> is_valid_topic_part_chars(B).
+
+is_valid_topic_part_chars(<<>>) -> true;
+is_valid_topic_part_chars(<<$+, _/binary>>) -> false;
+is_valid_topic_part_chars(<<$#, _/binary>>) -> false;
+is_valid_topic_part_chars(<<$/, _/binary>>) -> false;
+is_valid_topic_part_chars(<<0, _/binary>>) -> false;
+is_valid_topic_part_chars(<<_/utf8, Rest/binary>>) -> is_valid_topic_part_chars(Rest);
+is_valid_topic_part_chars(_) -> false.
+
+
+%% @doc Normalize a topic to a list. Wildcards are replace by the atoms '+' and '#' (as used by the router).
+-spec normalize_topic( topic() ) -> topic().
 normalize_topic(B) when is_binary(B) ->
-    binary:split(B, <<"/">>, [global]);
+    normalize_topic( binary:split(B, <<"/">>, [global]) );
 normalize_topic(L) when is_list(L) ->
     lists:map(fun normalize_topic_part/1, L).
 
+normalize_topic_part('+') -> '+';
+normalize_topic_part('#') -> '#';
 normalize_topic_part(<<"+">>) -> '+';
 normalize_topic_part(<<"#">>) -> '#';
 normalize_topic_part(T) when is_integer(T) -> T;
 normalize_topic_part(T) when is_binary(T) -> T;
 normalize_topic_part(T) -> z_convert:to_binary(T).
+
+%% @doc Recombine a normalized topic to a single binary string.
+-spec flatten_topic( topic() ) -> binary().
+flatten_topic(B) when is_binary(B) ->
+    B;
+flatten_topic([]) ->
+    <<>>;
+flatten_topic([ H | T ]) ->
+    flatten_topic_1(T, to_binary(H)).
+
+flatten_topic_1([], Acc) ->
+    Acc;
+flatten_topic_1([ H  | T ], Acc) ->
+    H1 = to_binary(H),
+    flatten_topic_1(T, <<Acc/binary, $/, H1/binary>>).
+
+-spec is_wildcard_topic( list() ) -> boolean().
+is_wildcard_topic(L) ->
+    lists:any(fun is_atom/1, L).
+
+to_binary(B) when is_binary(B) -> B;
+to_binary('+') -> <<"+">>;
+to_binary('#') -> <<"#">>;
+to_binary(N) -> z_convert:to_binary(N).
 
 %%--------------------------------------------------------------------
 

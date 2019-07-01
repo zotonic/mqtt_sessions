@@ -202,15 +202,14 @@ stop_timer(#state{ timer_ref = TRef } = State) ->
 %% @doc Publish the will message. A will is published if the connection process crashes or if
 %%      it is has been disconnected for a too long time.
 do_publish_will(#state{ is_stopping = true }) ->
-    lager:info("do_publish_will: is_stopping"),
     ok;
 do_publish_will(#state{ pool = Pool, will = #{ topic := Topic, payload := Payload } = Will, user_context = UserContext }) ->
-    lager:info("do_publish_will: ~p", [Will]),
-    Retain = maps:get(retain, Will, false),
-    QoS = maps:get(qos, Will, 0),
-    Props = maps:get(properties, Will, #{}),
-    router:publish(Pool, Topic, Payload, #{ qos => QoS, retain => Retain, properties => Props }, UserContext);
+    Options = #{
+        qos => maps:get(qos, Will, 0),
+        retain => maps:get(retain, Will, false),
+        properties => maps:get(properties, Will, #{})
+    },
+    mqtt_session:publish(Pool, Topic, Payload, Options, UserContext);
 do_publish_will(#state{}) ->
-    lager:info("do_publish_will: (none)"),
     ok.
 

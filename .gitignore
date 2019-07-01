@@ -1,5 +1,6 @@
 .eunit
 _build/
+_checkouts/
 deps
 *.o
 *.beam

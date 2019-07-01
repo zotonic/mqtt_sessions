@@ -65,13 +65,7 @@
     incoming_data/2,
 
     sidejobs_limit/0,
-    sidejobs_per_session/0,
-
-    normalize_topic/1,
-    validate_topic/1,
-    is_valid_topic/1,
-    flatten_topic/1,
-    is_wildcard_topic/1
+    sidejobs_per_session/0
     ]).
 
 
@@ -90,7 +84,7 @@
 -type subscriber() :: mqtt_sessions_router:subscriber().
 -type subscriber_options() :: mqtt_sessions_router:subscriber_options().
 
--type topic() :: list(binary() | integer() | '+' | '#') | binary().
+-type topic() :: mqtt_packet_map:mqtt_topic().
 
 -export_type([
     session_ref/0,
@@ -178,37 +172,42 @@ update_user_context(Pool, ClientId, Fun) ->
         {error, _} = Error -> Error
     end.
 
--spec publish( mqtt_packet_map:mqtt_message(), term() ) -> ok | {error, eacces}.
+-spec publish( mqtt_packet_map:mqtt_message(), term() ) -> ok | {error, eacces | invalid_topic}.
 publish(#{ type := publish } = Msg, UserContext) ->
     publish(?MQTT_SESSIONS_DEFAULT, Msg, UserContext).
 
 -spec publish
-        ( topic(), term(), term() ) -> ok | {error, eacces};
-        ( atom(), mqtt_packet_map:mqtt_message(), term() ) -> ok | {error, eacces}.
+        ( topic(), term(), term() ) -> ok | {error, eacces | invalid_topic};
+        ( atom(), mqtt_packet_map:mqtt_message(), term() ) -> ok | {error, eacces | invalid_topic}.
 publish(Pool, #{ type := publish, topic := Topic } = Msg, UserContext) when is_atom(Pool) ->
-    Runtime = runtime(),
-    case Runtime:is_allowed(publish, Topic, Msg, UserContext) of
-        true ->
-            case mqtt_sessions_router:publish(Pool, Topic, Msg, UserContext) of
-                {ok, _Pid} -> ok;
-                {error, _} = Error -> Error
+    case mqtt_packet_map_topic:validate_topic_publish(Topic) of
+        {ok, TopicValidated} ->
+            Runtime = runtime(),
+            case Runtime:is_allowed(publish, TopicValidated, Msg, UserContext) of
+                true ->
+                    case mqtt_sessions_router:publish(Pool, TopicValidated, Msg, UserContext) of
+                        {ok, _Pid} -> ok;
+                        {error, _} = Error -> Error
+                    end;
+                false ->
+                    {error, eacces}
             end;
-        false ->
-            {error, eacces}
+        {error, _} = Error ->
+            Error
     end;
 publish(Topic, Payload, UserContext) when is_list(Topic); is_binary(Topic) ->
     publish(?MQTT_SESSIONS_DEFAULT, Topic, Payload, #{}, UserContext).
 
--spec publish( atom(), topic(), term(), term() ) -> ok | {error, eacces}.
+-spec publish( atom(), topic(), term(), term() ) -> ok | {error, eacces | invalid_topic}.
 publish(Pool, Topic, Payload, UserContext) ->
     publish(Pool, Topic, Payload, #{}, UserContext).
 
--spec publish( atom(), topic(), term(), map(), term() ) -> ok | {error, eacces}.
+-spec publish( atom(), topic(), term(), map(), term() ) -> ok | {error, eacces | invalid_topic}.
 publish(Pool, Topic, Payload, Options, UserContext) ->
     Msg = #{
         type => publish,
         payload => Payload,
-        topic => normalize_topic(Topic),
+        topic => Topic,
         qos => maps:get(qos, Options, 0),
         retain => maps:get(retain, Options, false),
         properties => maps:get(properties, Options, #{})
@@ -216,46 +215,54 @@ publish(Pool, Topic, Payload, Options, UserContext) ->
     publish(Pool, Msg, UserContext).
 
 
--spec subscribe( topic(), term() ) -> ok | {error, eacces}.
+-spec subscribe( topic(), term() ) -> ok | {error, eacces | invalid_topic}.
 subscribe(TopicFilter, UserContext) ->
     subscribe(?MQTT_SESSIONS_DEFAULT, TopicFilter, self(), self(), #{}, UserContext).
 
--spec subscribe( atom(), topic(), term() ) -> ok | {error, eacces}.
+-spec subscribe( atom(), topic(), term() ) -> ok | {error, eacces | invalid_topic}.
 subscribe(Pool, TopicFilter, UserContext) ->
     subscribe(Pool, TopicFilter, self(), self(), #{}, UserContext).
 
--spec subscribe( atom(), topic(), mfa() | pid(), term() ) -> ok | {error, eacces}.
+-spec subscribe( atom(), topic(), mfa() | pid(), term() ) -> ok | {error, eacces | invalid_topic}.
 subscribe(Pool, TopicFilter, {_, _, _} = MFA, UserContext) ->
     subscribe(Pool, TopicFilter, MFA, self(), #{}, UserContext);
 subscribe(Pool, TopicFilter, Pid, UserContext) when is_pid(Pid) ->
     subscribe(Pool, TopicFilter, Pid, Pid, #{}, UserContext).
 
--spec subscribe( atom(), topic(), pid()|mfa(), pid(), map(), term() ) -> ok | {error, eacces}.
+-spec subscribe( atom(), topic(), pid()|mfa(), pid(), map(), term() ) -> ok | {error, eacces | invalid_topic}.
 subscribe(Pool, TopicFilter, Receiver, OwnerPid, Options, UserContext) ->
     Runtime = runtime(),
-    Topic1 = normalize_topic(TopicFilter),
-    case Runtime:is_allowed(subscribe, Topic1, #{}, UserContext) of
-        true ->
-            SubOpts = #{
-                no_local => maps:get(no_local, Options, false)
-            },
-            mqtt_sessions_router:subscribe(Pool, Topic1, Receiver, OwnerPid, SubOpts, UserContext);
-        false ->
-            {error, eacces}
+    case mqtt_packet_map_topic:validate_topic(TopicFilter) of
+        {ok, TopicFilterValidated} ->
+            case Runtime:is_allowed(subscribe, TopicFilterValidated, #{}, UserContext) of
+                true ->
+                    SubOpts = #{
+                        no_local => maps:get(no_local, Options, false)
+                    },
+                    mqtt_sessions_router:subscribe(Pool, TopicFilterValidated, Receiver, OwnerPid, SubOpts, UserContext);
+                false ->
+                    {error, eacces}
+            end;
+        {error, _} = Error ->
+            Error
     end.
 
--spec unsubscribe( topic() ) -> ok | {error, notfound}.
+-spec unsubscribe( topic() ) -> ok | {error, notfound | invalid_topic}.
 unsubscribe(TopicFilter) ->
     unsubscribe(?MQTT_SESSIONS_DEFAULT, TopicFilter, self()).
 
--spec unsubscribe( atom(), topic() ) -> ok | {error, notfound}.
+-spec unsubscribe( atom(), topic() ) -> ok | {error, notfound | invalid_topic}.
 unsubscribe(Pool, TopicFilter) ->
     unsubscribe(Pool, TopicFilter, self()).
 
--spec unsubscribe( atom(), topic(), pid() ) -> ok | {error, notfound}.
+-spec unsubscribe( atom(), topic(), pid() ) -> ok | {error, notfound | invalid_topic}.
 unsubscribe(Pool, TopicFilter, OwnerPid) ->
-    TopicFilter1 = normalize_topic(TopicFilter),
-    mqtt_sessions_router:unsubscribe(Pool, TopicFilter1, OwnerPid).
+    case mqtt_packet_map_topic:validate_topic(TopicFilter) of
+        {ok, TopicFilterValidated} ->
+            mqtt_sessions_router:unsubscribe(Pool, TopicFilterValidated, OwnerPid);
+        {error, _} = Error ->
+            Error
+    end.
 
 
 -spec temp_response_topic( term() ) -> {ok, topic()} | {error, eacces}.
@@ -300,84 +307,6 @@ await_response( Pool, Topic, Timeout ) when is_list(Topic), is_atom(Pool), is_in
         {error, timeout}
     end.
 
-
-%%--------------------------------------------------------------------
-
-%% @doc Validate a topic, return the normalized topic if it is a valid topic or topic filter.
--spec validate_topic( topic() ) -> {ok, topic()} | {error, invalid_topic}.
-validate_topic(T) ->
-    T1 = normalize_topic(T),
-    case is_valid_topic(T1) of
-        true -> {ok, T1};
-        false -> {error, invalid_topic}
-    end.
-
-%% @doc Check if a topic is valid, the topic must have been normalized.
-%%      All topic characters must be utf-8 and topic levels shouldn't contain + and # characters.
--spec is_valid_topic( list() ) -> boolean().
-is_valid_topic([]) ->
-    true;
-is_valid_topic([ '#' ]) ->
-    true;
-is_valid_topic([ '#' | _ ]) ->
-    false;
-is_valid_topic([ H | T ]) ->
-    case is_valid_topic_part(H) of
-        true -> is_valid_topic(T);
-        false -> false
-    end.
-
-is_valid_topic_part('#') -> true;
-is_valid_topic_part('+') -> true;
-is_valid_topic_part(B) -> is_valid_topic_part_chars(B).
-
-is_valid_topic_part_chars(<<>>) -> true;
-is_valid_topic_part_chars(<<$+, _/binary>>) -> false;
-is_valid_topic_part_chars(<<$#, _/binary>>) -> false;
-is_valid_topic_part_chars(<<$/, _/binary>>) -> false;
-is_valid_topic_part_chars(<<0, _/binary>>) -> false;
-is_valid_topic_part_chars(<<_/utf8, Rest/binary>>) -> is_valid_topic_part_chars(Rest);
-is_valid_topic_part_chars(_) -> false.
-
-
-%% @doc Normalize a topic to a list. Wildcards are replace by the atoms '+' and '#' (as used by the router).
--spec normalize_topic( topic() ) -> topic().
-normalize_topic(B) when is_binary(B) ->
-    normalize_topic( binary:split(B, <<"/">>, [global]) );
-normalize_topic(L) when is_list(L) ->
-    lists:map(fun normalize_topic_part/1, L).
-
-normalize_topic_part('+') -> '+';
-normalize_topic_part('#') -> '#';
-normalize_topic_part(<<"+">>) -> '+';
-normalize_topic_part(<<"#">>) -> '#';
-normalize_topic_part(T) when is_integer(T) -> T;
-normalize_topic_part(T) when is_binary(T) -> T;
-normalize_topic_part(T) -> z_convert:to_binary(T).
-
-%% @doc Recombine a normalized topic to a single binary string.
--spec flatten_topic( topic() ) -> binary().
-flatten_topic(B) when is_binary(B) ->
-    B;
-flatten_topic([]) ->
-    <<>>;
-flatten_topic([ H | T ]) ->
-    flatten_topic_1(T, to_binary(H)).
-
-flatten_topic_1([], Acc) ->
-    Acc;
-flatten_topic_1([ H  | T ], Acc) ->
-    H1 = to_binary(H),
-    flatten_topic_1(T, <<Acc/binary, $/, H1/binary>>).
-
--spec is_wildcard_topic( list() ) -> boolean().
-is_wildcard_topic(L) ->
-    lists:any(fun is_atom/1, L).
-
-to_binary(B) when is_binary(B) -> B;
-to_binary('+') -> <<"+">>;
-to_binary('#') -> <<"#">>;
-to_binary(N) -> z_convert:to_binary(N).
 
 %%--------------------------------------------------------------------
 

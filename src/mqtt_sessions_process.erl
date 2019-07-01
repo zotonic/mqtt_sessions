@@ -662,22 +662,25 @@ packet_pubcomp(#{ packet_id := PacketId }, #state{ awaiting_ack = WaitAck } = St
 packet_subscribe(#{ topics := Topics } = Msg, #state{ runtime = Runtime, user_context = UCtx } = State) ->
     Resp = lists:map(
         fun(#{ topic := TopicFilter0 } = Sub) ->
-            TopicFilter = mqtt_sessions:normalize_topic(TopicFilter0),
-            case Runtime:is_allowed(subscribe, TopicFilter, Msg, State#state.user_context) of
-                true ->
-                    QoS = maps:get(qos, Sub, 0),
-                    SubOptions = Sub#{
-                        qos => QoS,
-                        no_local => maps:get(no_local, Sub, false)
-                    },
-                    SubOptions1 = maps:remove(topic, SubOptions),
-                    case mqtt_sessions_router:subscribe(State#state.pool, TopicFilter, self(), self(), SubOptions1, UCtx) of
-                        ok -> {ok, QoS};
-                        {error, _} -> {error, ?MQTT_RC_ERROR}
+            case mqtt_packet_map_topic:validate_topic(TopicFilter0) of
+                {ok, TopicFilter} ->
+                    case Runtime:is_allowed(subscribe, TopicFilter, Msg, State#state.user_context) of
+                        true ->
+                            QoS = maps:get(qos, Sub, 0),
+                            SubOptions = Sub#{
+                                qos => QoS,
+                                no_local => maps:get(no_local, Sub, false)
+                            },
+                            SubOptions1 = maps:remove(topic, SubOptions),
+                            case mqtt_sessions_router:subscribe(State#state.pool, TopicFilter, self(), self(), SubOptions1, UCtx) of
+                                ok -> {ok, QoS};
+                                {error, _} -> {error, ?MQTT_RC_ERROR}
+                            end;
+                        false ->
+                            {error, ?MQTT_RC_NOT_AUTHORIZED}
                     end;
-                false ->
-                    {error, ?MQTT_RC_NOT_AUTHORIZED}
-            end
+                {error, _} ->
+                    {error, ?MQTT_RC_TOPIC_FILTER_INVALID}
         end,
         Topics),
     SubAck = #{

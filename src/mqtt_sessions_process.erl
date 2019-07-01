@@ -681,6 +681,7 @@ packet_subscribe(#{ topics := Topics } = Msg, #state{ runtime = Runtime, user_co
                     end;
                 {error, _} ->
                     {error, ?MQTT_RC_TOPIC_FILTER_INVALID}
+            end
         end,
         Topics),
     SubAck = #{

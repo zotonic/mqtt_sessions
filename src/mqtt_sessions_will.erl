@@ -209,7 +209,7 @@ do_publish_will(#state{ pool = Pool, will = #{ topic := Topic, payload := Payloa
         retain => maps:get(retain, Will, false),
         properties => maps:get(properties, Will, #{})
     },
-    mqtt_session:publish(Pool, Topic, Payload, Options, UserContext);
+    mqtt_sessions:publish(Pool, Topic, Payload, Options, UserContext);
 do_publish_will(#state{}) ->
     ok.
 

@@ -2,7 +2,7 @@ REBAR := ./rebar3
 REBAR_URL := https://s3.amazonaws.com/rebar3/rebar3
 ERL       ?= erl
 
-.PHONY: compile test
+.PHONY: compile test shell clean xref
 
 all: compile
 
@@ -13,10 +13,13 @@ shell: $(REBAR)
 	$(REBAR) shell
 
 test: $(REBAR)
-	$(REBAR) ct --config rebar.test.config
+	$(REBAR) as test ct
 
 clean: $(REBAR)
 	$(REBAR) clean
+
+xref: $(REBAR)
+	$(REBAR) as test xref
 
 ./rebar3:
 	$(ERL) -noshell -s inets -s ssl \

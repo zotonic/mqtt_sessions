@@ -71,7 +71,7 @@
 
 -type session_ref() :: pid() | binary().
 -type msg_options() :: #{
-        transport => pid(),
+        transport => pid() | function(),
         peer_ip => tuple() | undefined,
         context_prefs => map(),
         connection_pid => pid()

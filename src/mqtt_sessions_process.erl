@@ -71,8 +71,8 @@
     client_id :: binary(),
     routing_id :: binary(),
     user_context :: term(),
-    transport = undefined :: pid() | function(),
-    connection_pid = undefined :: pid(),
+    transport = undefined :: pid() | function() | undefined,
+    connection_pid = undefined :: pid() | undefined,
     is_session_present = false :: boolean(),
     pending_connack = undefined :: term(),
     pending :: queue:queue(),
@@ -102,8 +102,8 @@
     type :: atom(),
     msg_nr :: pos_integer(),
     packet_id = undefined :: undefined | non_neg_integer(),
-    queued :: pos_integer(),
-    expiry :: pos_integer(),
+    queued :: non_neg_integer(),
+    expiry :: non_neg_integer(),
     qos :: 0..2,
     message :: mqtt_packet_map:mqtt_packet()
 }).

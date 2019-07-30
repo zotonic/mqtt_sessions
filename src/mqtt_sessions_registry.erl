@@ -148,7 +148,7 @@ handle_info({'DOWN', _MRef, process, Pid, _Reason}, State) ->
     {noreply, State}.
 
 code_change(_Vsn, State, _Extra) ->
-    {noreply, State}.
+    {ok, State}.
 
 terminate(_Reason, _State) ->
     ok.
@@ -182,9 +182,9 @@ bin2int(Bin) ->
     lists:foldl(fun(N, Acc) -> Acc * 256 + N end, 0, binary_to_list(Bin)).
 
 -spec radix_bits(1..64) -> pos_integer().
-radix_bits(N) when N =< 16 -> 4;
-radix_bits(N) when N =< 26 -> 5;
-radix_bits(_N) -> 6.
+% radix_bits(N) when N =< 16 -> 4;
+% radix_bits(N) when N =< 26 -> 5;
+radix_bits(N) when N > 26 -> 6.
 
 -spec rand_bytes(integer()) -> binary().
 rand_bytes(N) when N > 0 ->

@@ -29,7 +29,7 @@
 
 %% @doc Handle an incoming connect message, the package MUST be a connect package.
 -spec incoming_connect( Pool :: atom(), mqtt_packet_map:mqtt_packet(), mqtt_sessions:msg_options() ) ->
-        {ok, mqtt_sessions:session_ref()} | {error, term()}.
+        {ok, mqtt_sessions:session_ref()}.
 incoming_connect(Pool, #{ type := connect, client_id := <<>> } = Msg, Options) ->
     start_session(Pool, Msg, Options);
 incoming_connect(Pool, #{ type := connect, client_id := ClientId, clean_start := true } = Msg, Options) ->
@@ -44,27 +44,27 @@ incoming_connect(Pool, #{ type := connect, client_id := ClientId, clean_start :=
             ok = mqtt_sessions_process:incoming_connect(SessionRef, Msg, Options),
             {ok, SessionRef};
         {error, notfound} ->
-            start_session(Pool, Msg, Options);
-        {error, _} = Error ->
-            send_connack_error(?MQTT_RC_ERROR, Msg, Options),
-            Error
+            start_session(Pool, Msg, Options)
+        % {error, _} = Error ->
+        %     send_connack_error(?MQTT_RC_ERROR, Msg, Options),
+        %     Error
     end.
 
 %% @doc The session pool returned an error when trying to map the client-id
-send_connack_error(ReasonCode, #{ protocol_version := PV } = Msg, Options) ->
-    Msg = #{
+send_connack_error(ReasonCode, #{ protocol_version := PV }, Options) ->
+    AckMsg = #{
         type => connack,
         reason_code => ReasonCode
     },
-    MsgB = mqtt_packet_map:encode(PV, Msg),
+    AckMsgB = mqtt_packet_map:encode(PV, AckMsg),
     case maps:get(transport, Options, undefined) of
         undefined ->
             ok;
         Pid when is_pid(Pid) ->
-            Pid ! {mqtt_transport, self(), MsgB},
+            Pid ! {mqtt_transport, self(), AckMsgB},
             Pid ! {mqtt_transport, self(), disconnect};
         F when is_function(F) ->
-            F(self(), MsgB),
+            F(self(), AckMsgB),
             F(self(), disconnect)
     end.
 

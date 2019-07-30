@@ -43,10 +43,13 @@ publish(Pool, Topic, Routes, Msg, PublisherContext) ->
         {error, overload} ->
             lager:debug("MQTT sidejob overload, delaying job ~p ...", [ Topic ]),
             timer:sleep(100),
-            publish(Pool, Topic, Routes, Msg, PublisherContext)
+            sidejob_supervisor:spawn(
+                    ?MQTT_SESSIONS_JOBS,
+                    {?MODULE, publish_job, [ Pool, Topic, Routes, Msg, PublisherContext, self() ]})
+        % publish(Pool, Topic, Routes, Msg, PublisherContext)
     end.
 
--spec publish_retained( atom(), mqtt_sessions:topic(), list(), pid(), list(), term()) -> ok | {error, overload}.
+-spec publish_retained( atom(), mqtt_sessions:topic(), list(), pid(), map(), term()) -> ok | {error, overload}.
 publish_retained(_Pool, _TopicFilter, [], _Subscriber, _Options, _SubscriberContext) ->
     ok;
 publish_retained(Pool, TopicFilter, Ms, Subscriber, Options, SubscriberContext) ->
@@ -59,7 +62,10 @@ publish_retained(Pool, TopicFilter, Ms, Subscriber, Options, SubscriberContext) 
         {error, overload} ->
             lager:debug("MQTT sidejob overload, delaying retained job ~p ...", [ TopicFilter ]),
             timer:sleep(100),
-            publish_retained(Pool, TopicFilter, Ms, Subscriber, Options, SubscriberContext)
+            sidejob_supervisor:spawn(
+                    ?MQTT_SESSIONS_JOBS,
+                    {?MODULE, publish_retained_job, [ Pool, TopicFilter, Ms, Subscriber, Options, SubscriberContext ]})
+            % publish_retained(Pool, TopicFilter, Ms, Subscriber, Options, SubscriberContext)
     end.
 
 

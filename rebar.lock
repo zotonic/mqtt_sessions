@@ -3,7 +3,7 @@
  {<<"jsx">>,{pkg,<<"jsx">>,<<"2.10.0">>},0},
  {<<"lager">>,{pkg,<<"lager">>,<<"3.7.0">>},0},
  {<<"mqtt_packet_map">>,{pkg,<<"mqtt_packet_map">>,<<"1.1.0">>},0},
- {<<"router">>,{pkg,<<"router">>,<<"1.0.3">>},0},
+ {<<"router">>,{pkg,<<"router">>,<<"1.0.4">>},0},
  {<<"sidejob">>,{pkg,<<"sidejob">>,<<"2.1.0">>},0},
  {<<"zotonic_stdlib">>,{pkg,<<"zotonic_stdlib">>,<<"1.0.0">>},0}]}.
 [
@@ -12,7 +12,7 @@
  {<<"jsx">>, <<"77760560D6AC2B8C51FD4C980E9E19B784016AA70BE354CE746472C33BEB0B1C">>},
  {<<"lager">>, <<"563AB17CD32134A3DD17EC3B3622E6D8F827506AA4F8C489158879BED87D980B">>},
  {<<"mqtt_packet_map">>, <<"4D44C0673B936491F9BE7AF4908092AB902C0ADFD168158DC73953A3A560C547">>},
- {<<"router">>, <<"0313119BB68BCAFD3E4A6FA39ACD8D20426A1E3435B6C3123FA39F9C25D83788">>},
+ {<<"router">>, <<"E9311B9D296B41C9484FC933EFD847F87E7DCBAD94DEE1566FB77570CA59EF2C">>},
  {<<"sidejob">>, <<"5D6A7C9C620778CB1908E46B552D767DF2ED4D77070BB7B5B8773D4FF18D1D37">>},
  {<<"zotonic_stdlib">>, <<"28253FCEF01F1EFF395F6EAC77D62BB9FF4F45FF37ADD7FDCB1BD4976FCD2126">>}]}
 ].

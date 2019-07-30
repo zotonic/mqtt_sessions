@@ -77,11 +77,11 @@
 -include_lib("../include/mqtt_sessions.hrl").
 
 
--spec publish( atom(), list(), mqtt_packet_map:mqtt_message() ) -> {ok, pid() | undefined}.
+-spec publish( atom(), list(), mqtt_packet_map:mqtt_message() ) -> {ok, pid() | undefined} | {error, overload}.
 publish( Pool, Topic, Msg ) ->
     publish(Pool, Topic, Msg, undefined).
 
--spec publish( atom(), list(), mqtt_packet_map:mqtt_message(), term() ) -> {ok, pid() | undefined}.
+-spec publish( atom(), list(), mqtt_packet_map:mqtt_message(), term() ) -> {ok, pid() | undefined} | {error, overload}.
 publish( Pool, Topic0, Msg, PublisherContext ) ->
     Topic = publish_topic(Topic0),
     Routes = router:route(Pool, Topic),

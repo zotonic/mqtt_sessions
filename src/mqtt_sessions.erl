@@ -73,10 +73,11 @@
 -type msg_options() :: #{
         transport => pid(),
         peer_ip => tuple() | undefined,
-        context_prefs => map()
+        context_prefs => map(),
+        connection_pid => pid()
     }.
 -type session_options() :: #{
-        routing_id := binary(),
+        routing_id => binary(),
         peer_ip => tuple() | undefined,
         context_prefs => map()
     }.
@@ -387,12 +388,8 @@ incoming_connect(Pool, MsgBin, Options) ->
         {ok, {#{ type := connect } = Packet, Rest}} ->
             case connect_pool(Pool, Packet) of
                 {ok, ConnectPool} ->
-                    case mqtt_sessions_incoming:incoming_connect(ConnectPool, Packet, Options#{ connection_pid => self() }) of
-                        {ok, SessionRef} ->
-                            {ok, {SessionRef, Rest}};
-                        {error, _} = Error ->
-                            Error
-                    end;
+                    {ok, SessionRef} = mqtt_sessions_incoming:incoming_connect(ConnectPool, Packet, Options#{ connection_pid => self() }),
+                    {ok, {SessionRef, Rest}};
                 {error, _} = Error ->
                     mqtt_sessions_incoming:send_connack_error(?MQTT_RC_SERVER_UNAVAILABLE, Packet, Options),
                     Error

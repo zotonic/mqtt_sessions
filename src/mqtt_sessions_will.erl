@@ -70,7 +70,7 @@ reconnected(Pid) ->
     gen_server:cast(Pid, reconnected).
 
 %% @doc Signal the will process that the session got disconnected from the client.
--spec disconnected(pid() | undefined, boolean(), pos_integer()) -> ok.
+-spec disconnected(pid() | undefined, boolean(), non_neg_integer()) -> ok.
 disconnected(Pid, IsWill, ExpiryInterval) ->
     gen_server:cast(Pid, {disconnected, IsWill, ExpiryInterval}).
 

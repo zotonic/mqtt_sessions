@@ -21,6 +21,9 @@ clean: $(REBAR)
 xref: $(REBAR)
 	$(REBAR) as test xref
 
+dialyzer: $(REBAR)
+	$(REBAR) as test dialyzer
+
 ./rebar3:
 	$(ERL) -noshell -s inets -s ssl \
 	  -eval '{ok, saved_to_file} = httpc:request(get, {"$(REBAR_URL)", []}, [], [{stream, "./rebar3"}])' \

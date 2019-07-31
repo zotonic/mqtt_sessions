@@ -87,6 +87,8 @@
 
 -type topic() :: mqtt_packet_map:mqtt_topic().
 
+-type callback() :: pid() | {module(), atom(), list()}.
+
 -export_type([
     session_ref/0,
     msg_options/0,
@@ -94,7 +96,8 @@
     mqtt_msg/0,
     subscriber/0,
     subscriber_options/0,
-    topic/0
+    topic/0,
+    callback/0
 ]).
 
 -define(SIDEJOBS_PER_SESSION, 20).
@@ -224,13 +227,13 @@ subscribe(TopicFilter, UserContext) ->
 subscribe(Pool, TopicFilter, UserContext) ->
     subscribe(Pool, TopicFilter, self(), self(), #{}, UserContext).
 
--spec subscribe( atom(), topic(), mfa() | pid(), term() ) -> ok | {error, eacces | invalid_topic}.
+-spec subscribe( atom(), topic(), callback(), term() ) -> ok | {error, eacces | invalid_topic}.
 subscribe(Pool, TopicFilter, {_, _, _} = MFA, UserContext) ->
     subscribe(Pool, TopicFilter, MFA, self(), #{}, UserContext);
 subscribe(Pool, TopicFilter, Pid, UserContext) when is_pid(Pid) ->
     subscribe(Pool, TopicFilter, Pid, Pid, #{}, UserContext).
 
--spec subscribe( atom(), topic(), pid()|mfa(), pid(), map(), term() ) -> ok | {error, eacces | invalid_topic}.
+-spec subscribe( atom(), topic(), callback(), pid(), map(), term() ) -> ok | {error, eacces | invalid_topic}.
 subscribe(Pool, TopicFilter, Receiver, OwnerPid, Options, UserContext) ->
     Runtime = runtime(),
     case mqtt_packet_map_topic:validate_topic(TopicFilter) of

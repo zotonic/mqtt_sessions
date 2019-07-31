@@ -97,7 +97,7 @@ publish( Pool, Topic0, Msg, PublisherContext ) ->
     end.
 
 
--spec subscribe( atom(), list(), subscriber(), term() ) -> ok | {error, invalid_subscriber}.
+-spec subscribe( atom(), list(), mqtt_sessions:callback(), term() ) -> ok | {error, invalid_subscriber}.
 subscribe( Pool, Topic, {_, _, _} = MFA, SubscriberContext) ->
     subscribe( Pool, Topic, MFA, self(), #{}, SubscriberContext);
 subscribe( Pool, Topic, Pid, SubscriberContext) when is_pid(Pid) ->

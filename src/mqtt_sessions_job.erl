@@ -49,7 +49,7 @@ publish(Pool, Topic, Routes, Msg, PublisherContext) ->
         % publish(Pool, Topic, Routes, Msg, PublisherContext)
     end.
 
--spec publish_retained( atom(), mqtt_sessions:topic(), list(), pid(), map(), term()) -> ok | {error, overload}.
+-spec publish_retained( atom(), mqtt_sessions:topic(), list(), mqtt_sessions:callback(), map(), term()) -> ok | {error, overload}.
 publish_retained(_Pool, _TopicFilter, [], _Subscriber, _Options, _SubscriberContext) ->
     ok;
 publish_retained(Pool, TopicFilter, Ms, Subscriber, Options, SubscriberContext) ->
@@ -76,6 +76,7 @@ publish_job(Pool, Topic, Routes, Msg, PublisherContext, PublishedPid) ->
         end,
         Routes).
 
+-spec publish_retained_job( atom(), mqtt_sessions:topic(), list(), mqtt_sessions:callback(), map(), term()) -> ok.
 publish_retained_job(Pool, TopicFilter, Ms, Subscriber, Options, SubscriberContext) ->
     Runtime = mqtt_sessions:runtime(),
     lists:foreach(

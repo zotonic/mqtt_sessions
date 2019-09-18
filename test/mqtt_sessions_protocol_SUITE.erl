@@ -24,7 +24,8 @@ end_per_testcase(_TestCase, _Config) ->
 
 all() ->
     [
-        connect_disconnect_v5_test
+        connect_disconnect_v5_test,
+        connect_reconnect_v5_test
     ].
 
 %%--------------------------------------------------------------------
@@ -85,5 +86,66 @@ connect_disconnect_v5_test(_Config) ->
             ok
         after 1000 ->
             ct:abort_current_testcase(waiting_for_down)
+    end,
+    ok.
+
+
+
+connect_reconnect_v5_test(_Config) ->
+    Connect = #{
+        type => connect,
+        protocol_name => <<"MQTT">>,
+        protocol_version => 5,
+        clean_start => true,
+        client_id => <<"test2">>,
+        will_flag => false,
+        username => <<>>,
+        password => <<>>,
+        properties => #{
+        }
+    },
+    {ok, ConnectMsg} = mqtt_packet_map:encode(5, Connect),
+    Options = #{
+        transport => self()
+    },
+    {ok, {SessionPid, <<>>}} = mqtt_sessions:incoming_connect(ConnectMsg, Options),
+    true = is_pid(SessionPid),
+    receive
+        {mqtt_transport, SessionPid, MsgBin} when is_binary(MsgBin) ->
+            {ok, {ConnAck, <<>>}} = mqtt_packet_map:decode(MsgBin),
+            #{
+                type := connack,
+                session_present := false,
+                reason_code := 0
+            } = ConnAck,
+            ok
+    end,
+    Reconnect = #{
+        type => connect,
+        protocol_name => <<"MQTT">>,
+        protocol_version => 5,
+        clean_start => false,
+        client_id => <<"test2">>,
+        will_flag => false,
+        username => <<>>,
+        password => <<>>,
+        properties => #{
+        }
+    },
+    {ok, ReconnectMsg} = mqtt_packet_map:encode(5, Reconnect),
+    {ok, {SessionPid, <<>>}} = mqtt_sessions:incoming_connect(ReconnectMsg, Options),
+    %
+    % We have reconnected to the existing session, check the connack
+    % for the 'session_present' flag.
+    %
+    receive
+        {mqtt_transport, SessionPid, MsgBin2}  when is_binary(MsgBin2) ->
+            {ok, {ConnAck2, <<>>}} = mqtt_packet_map:decode(MsgBin2),
+            #{
+                type := connack,
+                session_present := true,
+                reason_code := 0
+            } = ConnAck2,
+            ok
     end,
     ok.

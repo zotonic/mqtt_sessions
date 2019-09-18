@@ -110,7 +110,29 @@ connect(_Packet, UserContext) ->
 %% @doc Re-authentication. This is called when the client requests a re-authentication (or replies in a AUTH re-authentication).
 -spec reauth( mqtt_packet_map:mqtt_packet(), user_context()) -> {ok, mqtt_packet_map:mqtt_packet(), user_context()} | {error, term()}.
 reauth(#{ type := auth }, _UserContext) ->
-    {error, notsupported}.
+    {error, notsupported};
+reauth(#{ type := connect, username := U, password := P }, #{ user := undefined } = UserContext) when ?none(U), ?none(P) ->
+    ConnAck = #{
+        type => connack,
+        reason_code => ?MQTT_RC_SUCCESS
+    },
+    {ok, ConnAck, UserContext#{ user => undefined }};
+reauth(#{ type := connect, username := U, password := P }, #{ user := U } = UserContext) when not ?none(U), not ?none(P) ->
+    % User logs on using username/password
+    % ... check username/password
+    % ... log on user on UserContext
+    ConnAck = #{
+        type => connack,
+        reason_code => ?MQTT_RC_SUCCESS
+    },
+    {ok, ConnAck, UserContext#{ user => U }};
+reauth(_Packet, UserContext) ->
+    ConnAck = #{
+        type => connack,
+        reason_code => ?MQTT_RC_NOT_AUTHORIZED
+    },
+    {ok, ConnAck, UserContext}.
+
 
 
 -spec is_allowed( publish | subscribe, topic(), mqtt_packet_map:mqtt_packet(), user_context()) -> boolean().

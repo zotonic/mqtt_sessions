@@ -402,23 +402,25 @@ packet_connect(#{ protocol_version := 5, protocol_name := <<"MQTT">>, properties
         EI -> EI
     end,
     KeepAlive = maps:get(keep_alive, Msg, ?KEEP_ALIVE_DEFAULT),
-    State1 = State#state{
+    StateIfAccept = State#state{
         protocol_version = 5,
         will = extract_will(Msg),
         session_expiry_interval = ExpiryInterval,
         keep_alive = KeepAlive
     },
-    handle_connect_auth(Msg, set_connection(Options, State1));
+    StateIfAccept1 = set_connection(Options, StateIfAccept),
+    handle_connect_auth(Msg, Options, StateIfAccept1, State);
 packet_connect(#{ protocol_version := 4, protocol_name := <<"MQTT">> } = Msg, Options, State) ->
     % MQTT v3.1.1
     KeepAlive = maps:get(keep_alive, Msg, ?KEEP_ALIVE_DEFAULT),
-    State1 = State#state{
+    StateIfAccept = State#state{
         protocol_version = 4,
         will = extract_will(Msg),
         session_expiry_interval = KeepAlive * 3,
         keep_alive = KeepAlive
     },
-    handle_connect_auth(Msg, set_connection(Options, State1));
+    StateIfAccept1 = set_connection(Options, StateIfAccept),
+    handle_connect_auth(Msg, Options, StateIfAccept1, State);
 packet_connect(_ConnectMsg, Options, State) ->
     ConnAck = #{
         type => connack,
@@ -427,44 +429,39 @@ packet_connect(_ConnectMsg, Options, State) ->
     _ = reply(ConnAck, set_connection(Options, State)),
     {error, protocol_version}.
 
-packet_connect_auth(Msg, State) ->
-    handle_connect_auth(Msg, State).
+packet_connect_auth(Msg, #state{ runtime = Runtime, user_context = UserContext } = State) ->
+    handle_connect_auth_1(Runtime:reauth(Msg, UserContext), Msg, State, State).
 
-handle_connect_auth(Msg, #state{ runtime = Runtime, is_session_present = IsSessionPresent, user_context = UserContext } = State) ->
-    handle_connect_auth_1(Runtime:connect(Msg, IsSessionPresent, UserContext), Msg, State).
+handle_connect_auth(Msg, Options, StateIfAccept, #state{ runtime = Runtime, is_session_present = IsSessionPresent, user_context = UserContext } = State) ->
+    handle_connect_auth_1(Runtime:connect(Msg, IsSessionPresent, Options, UserContext), Msg, StateIfAccept, State).
 
 %% @doc Accept the new connection with the given ConnAck or Auth message.
 %%      If an Auth message is sent then we need further authenticaion handshakes.
 %%      Only after a succesful connack we will set the is_session_present flag.
-handle_connect_auth_1({ok, #{ type := connack, reason_code := ReasonCode } = ConnAck, UserContext1}, _Msg, State) ->
-    State1 = State#state{
+handle_connect_auth_1({ok, #{ type := connack, reason_code := ?MQTT_RC_SUCCESS } = ConnAck, UserContext1}, _Msg, StateIfAccept, _State) ->
+    State1 = StateIfAccept#state{
         user_context = UserContext1,
+        is_session_present = true,
         will = undefined
     },
     State2 = reply_connack(ConnAck, State1),
-    case ReasonCode of
-        ?MQTT_RC_SUCCESS ->
-            mqtt_sessions_will:connected(State2#state.will_pid, State#state.will,
-                                         State2#state.session_expiry_interval, State2#state.user_context),
-            State3 = State2#state{
-                is_session_present = true,
-                will = undefined
-            },
-            State4 = resend_unacknowledged( cleanup_pending(State3) ),
-            {ok, State4};
-        _ ->
-            lager:info("MQTT connect/auth refused (~p): ~p", [ReasonCode, ConnAck]),
-            {error, connection_refused}
-    end;
-handle_connect_auth_1({ok, #{ type := auth } = Auth, UserContext1}, _Msg, State) ->
-    State1 = State#state{
+    mqtt_sessions_will:connected(State2#state.will_pid, StateIfAccept#state.will,
+                                 State2#state.session_expiry_interval, State2#state.user_context),
+    State3 = resend_unacknowledged( cleanup_pending(State2) ),
+    {ok, State3};
+handle_connect_auth_1({ok, #{ type := connack, reason_code := ReasonCode } = ConnAck, _UserContext1}, _Msg, StateIfAccept, _State) ->
+    _ = reply_connack(ConnAck, StateIfAccept),
+    lager:info("MQTT connect/auth refused (~p): ~p", [ReasonCode, ConnAck]),
+    {error, connection_refused};
+handle_connect_auth_1({ok, #{ type := auth } = Auth, UserContext1}, _Msg, StateIfAccept, _State) ->
+    State1 = StateIfAccept#state{
         user_context = UserContext1
     },
     State2 = reply(Auth, State1),
     mqtt_sessions_will:connected(State2#state.will_pid, undefined,
                                  State2#state.session_expiry_interval, State2#state.user_context),
     {ok, State2};
-handle_connect_auth_1({error, Reason}, Msg, _State) ->
+handle_connect_auth_1({error, Reason}, Msg, _StateIfAccept, _State) ->
     lager:info("MQTT connect/auth refused (~p): ~p", [Reason, Msg]),
     {error, connection_refused}.
 
@@ -823,10 +820,9 @@ cleanup_state_disconnected(State) ->
 
 
 %% @doc Send a connack to the remote, ping the will-watchdog that we connected
-reply_connack(#{ type := connack } = ConnAck, State) ->
+reply_connack(#{ type := connack, reason_code := ?MQTT_RC_SUCCESS } = ConnAck, State) ->
     AckProps = maps:get(properties, ConnAck, #{}),
     ConnAck1 = ConnAck#{
-        session_present => State#state.is_session_present,
         properties => AckProps#{
             session_expiry_interval => State#state.session_expiry_interval,
             server_keep_alive => State#state.keep_alive,
@@ -836,7 +832,9 @@ reply_connack(#{ type := connack } = ConnAck, State) ->
             <<"cotonic-routing-id">> => State#state.routing_id
         }
     },
-    reply(ConnAck1, State).
+    reply(ConnAck1, State);
+reply_connack(#{ type := connack } = ConnAck, State) ->
+    reply(ConnAck, State).
 
 
 %% @doc Check the connect packet, extract the will as a map for the will-watchdog.

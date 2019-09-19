@@ -23,7 +23,7 @@
     pool_default/0,
 
     new_user_context/3,
-    connect/3,
+    connect/4,
     reauth/2,
     is_allowed/4,
     is_valid_message/3
@@ -36,7 +36,7 @@
 -callback pool_default() -> {ok, atom()} | {error, term()}.
 
 -callback new_user_context( atom(), binary(), mqtt_sessions:session_options() ) -> term().
--callback connect( mqtt_packet_map:mqtt_packet(), boolean(), user_context() ) -> {ok, mqtt_packet_map:mqtt_packet(), user_context()} | {error, term()}.
+-callback connect( mqtt_packet_map:mqtt_packet(), boolean(), map(), user_context() ) -> {ok, mqtt_packet_map:mqtt_packet(), user_context()} | {error, term()}.
 -callback reauth( mqtt_packet_map:mqtt_packet(), user_context() ) -> {ok, mqtt_packet_map:mqtt_packet(), user_context()} | {error, term()}.
 -callback is_allowed( publish | subscribe, topic(), mqtt_packet_map:mqtt_packet(), user_context()) -> boolean().
 -callback is_valid_message( mqtt_packet_map:mqtt_packet(), mqtt_sessions:msg_options(), user_context() ) -> boolean().
@@ -70,8 +70,8 @@ new_user_context( Pool, ClientId, Options ) ->
         user => undefined
     }.
 
--spec connect( mqtt_packet_map:mqtt_packet(), boolean(), user_context()) -> {ok, mqtt_packet_map:mqtt_packet(), user_context()} | {error, term()}.
-connect(#{ type := connect, username := U, password := P }, IsSessionPresent, UserContext) when ?none(U), ?none(P) ->
+-spec connect( mqtt_packet_map:mqtt_packet(), boolean(), mqtt_session:msg_options(), user_context()) -> {ok, mqtt_packet_map:mqtt_packet(), user_context()} | {error, term()}.
+connect(#{ type := connect, username := U, password := P }, IsSessionPresent, Options, UserContext) when ?none(U), ?none(P) ->
     % Anonymous login - user must stay anonymous (regardless of IsSessionPresent)
     case maps:get(user, UserContext, undefined) of
         undefined ->
@@ -80,7 +80,10 @@ connect(#{ type := connect, username := U, password := P }, IsSessionPresent, Us
                 reason_code => ?MQTT_RC_SUCCESS,
                 session_present => IsSessionPresent
             },
-            {ok, ConnAck, UserContext#{ user => undefined }};
+            {ok, ConnAck, UserContext#{
+                user => undefined,
+                peer_ip => maps:get(peer_ip, Options, undefined)
+            }};
         _SomeUser ->
             ConnAck = #{
                 type => connack,
@@ -88,7 +91,7 @@ connect(#{ type := connect, username := U, password := P }, IsSessionPresent, Us
             },
             {ok, ConnAck, UserContext}
     end;
-connect(#{ type := connect, username := U, password := P }, IsSessionPresent, UserContext) when not ?none(U), not ?none(P) ->
+connect(#{ type := connect, username := U, password := P }, IsSessionPresent, Options, UserContext) when not ?none(U), not ?none(P) ->
     % User logs on using username/password
     case maps:get(user, UserContext, undefined) of
         undefined ->
@@ -99,7 +102,10 @@ connect(#{ type := connect, username := U, password := P }, IsSessionPresent, Us
                 reason_code => ?MQTT_RC_SUCCESS,
                 session_present => IsSessionPresent
             },
-            {ok, ConnAck, UserContext#{ user => U }};
+            {ok, ConnAck, UserContext#{
+                user => U,
+                peer_ip => maps:get(peer_ip, Options, undefined)
+            }};
         U when IsSessionPresent ->
             % ... check username/password
             ConnAck = #{
@@ -107,7 +113,9 @@ connect(#{ type := connect, username := U, password := P }, IsSessionPresent, Us
                 reason_code => ?MQTT_RC_SUCCESS,
                 session_present => IsSessionPresent
             },
-            {ok, ConnAck, UserContext};
+            {ok, ConnAck, UserContext#{
+                peer_ip => maps:get(peer_ip, Options, undefined)
+            }};
         _SomeUser ->
             ConnAck = #{
                 type => connack,
@@ -115,7 +123,7 @@ connect(#{ type := connect, username := U, password := P }, IsSessionPresent, Us
             },
             {ok, ConnAck, UserContext}
     end;
-connect(#{ type := connect, properties := #{ authentication_method := _AuthMethod } = Props }, _IsSessionPresent, UserContext) ->
+connect(#{ type := connect, properties := #{ authentication_method := _AuthMethod } = Props }, _IsSessionPresent, _Options, UserContext) ->
     % User logs on using extended authentication method
     _AuthData = maps:get(authentication_data, Props, undefined),
     % ... handle extended authentication handshake
@@ -124,7 +132,7 @@ connect(#{ type := connect, properties := #{ authentication_method := _AuthMetho
         reason_code => ?MQTT_RC_NOT_AUTHORIZED
     },
     {ok, ConnAck, UserContext};
-connect(_Packet, _IsSessionPresent, UserContext) ->
+connect(_Packet, _IsSessionPresent, _Options, UserContext) ->
     % Extended authentication
     ConnAck = #{
         type => connack,

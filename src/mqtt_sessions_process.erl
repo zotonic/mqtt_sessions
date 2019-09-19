@@ -430,10 +430,8 @@ packet_connect(_ConnectMsg, Options, State) ->
 packet_connect_auth(Msg, State) ->
     handle_connect_auth(Msg, State).
 
-handle_connect_auth(Msg, #state{ runtime = Runtime, is_session_present = false, user_context = UserContext } = State) ->
-    handle_connect_auth_1(Runtime:connect(Msg, UserContext), Msg, State);
-handle_connect_auth(Msg, #state{ runtime = Runtime, is_session_present = true, user_context = UserContext } = State) ->
-    handle_connect_auth_1(Runtime:reauth(Msg, UserContext), Msg, State).
+handle_connect_auth(Msg, #state{ runtime = Runtime, is_session_present = IsSessionPresent, user_context = UserContext } = State) ->
+    handle_connect_auth_1(Runtime:connect(Msg, IsSessionPresent, UserContext), Msg, State).
 
 %% @doc Accept the new connection with the given ConnAck or Auth message.
 %%      If an Auth message is sent then we need further authenticaion handshakes.

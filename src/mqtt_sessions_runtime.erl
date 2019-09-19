@@ -23,7 +23,7 @@
     pool_default/0,
 
     new_user_context/3,
-    connect/2,
+    connect/3,
     reauth/2,
     is_allowed/4,
     is_valid_message/3
@@ -36,7 +36,7 @@
 -callback pool_default() -> {ok, atom()} | {error, term()}.
 
 -callback new_user_context( atom(), binary(), mqtt_sessions:session_options() ) -> term().
--callback connect( mqtt_packet_map:mqtt_packet(), user_context() ) -> {ok, mqtt_packet_map:mqtt_packet(), user_context()} | {error, term()}.
+-callback connect( mqtt_packet_map:mqtt_packet(), boolean(), user_context() ) -> {ok, mqtt_packet_map:mqtt_packet(), user_context()} | {error, term()}.
 -callback reauth( mqtt_packet_map:mqtt_packet(), user_context() ) -> {ok, mqtt_packet_map:mqtt_packet(), user_context()} | {error, term()}.
 -callback is_allowed( publish | subscribe, topic(), mqtt_packet_map:mqtt_packet(), user_context()) -> boolean().
 -callback is_valid_message( mqtt_packet_map:mqtt_packet(), mqtt_sessions:msg_options(), user_context() ) -> boolean().
@@ -59,8 +59,6 @@ vhost_pool( _VHost ) ->
 pool_default() ->
     {ok, ?MQTT_SESSIONS_DEFAULT}.
 
-% TODO: check authentication credentials
-% TODO: if reconnect, check against previous credentials (MUST be the same)
 
 -spec new_user_context( atom(), binary(), mqtt_sessions:session_options() ) -> term().
 new_user_context( Pool, ClientId, Options ) ->
@@ -72,24 +70,49 @@ new_user_context( Pool, ClientId, Options ) ->
         user => undefined
     }.
 
--spec connect( mqtt_packet_map:mqtt_packet(), user_context()) -> {ok, mqtt_packet_map:mqtt_packet(), user_context()} | {error, term()}.
-connect(#{ type := connect, username := U, password := P }, UserContext) when ?none(U), ?none(P) ->
-    % Anonymous login
-    ConnAck = #{
-        type => connack,
-        reason_code => ?MQTT_RC_SUCCESS
-    },
-    {ok, ConnAck, UserContext#{ user => undefined }};
-connect(#{ type := connect, username := U, password := P }, UserContext) when not ?none(U), not ?none(P) ->
+-spec connect( mqtt_packet_map:mqtt_packet(), boolean(), user_context()) -> {ok, mqtt_packet_map:mqtt_packet(), user_context()} | {error, term()}.
+connect(#{ type := connect, username := U, password := P }, _IsSessionPresent, UserContext) when ?none(U), ?none(P) ->
+    % Anonymous login - user must stay anonymous (regardless of IsSessionPresent)
+    case maps:get(user, UserContext, undefined) of
+        undefined ->
+            ConnAck = #{
+                type => connack,
+                reason_code => ?MQTT_RC_SUCCESS
+            },
+            {ok, ConnAck, UserContext#{ user => undefined }};
+        _SomeUser ->
+            ConnAck = #{
+                type => connack,
+                reason_code => ?MQTT_RC_NOT_AUTHORIZED
+            },
+            {ok, ConnAck, UserContext}
+    end;
+connect(#{ type := connect, username := U, password := P }, IsSessionPresent, UserContext) when not ?none(U), not ?none(P) ->
     % User logs on using username/password
-    % ... check username/password
-    % ... log on user on UserContext
-    ConnAck = #{
-        type => connack,
-        reason_code => ?MQTT_RC_SUCCESS
-    },
-    {ok, ConnAck, UserContext#{ user => U }};
-connect(#{ type := connect, properties := #{ authentication_method := _AuthMethod } = Props }, UserContext) ->
+    case maps:get(user, UserContext, undefined) of
+        undefined ->
+            % ... check username/password
+            % ... log on user on UserContext
+            ConnAck = #{
+                type => connack,
+                reason_code => ?MQTT_RC_SUCCESS
+            },
+            {ok, ConnAck, UserContext#{ user => U }};
+        U when IsSessionPresent ->
+            % ... check username/password
+            ConnAck = #{
+                type => connack,
+                reason_code => ?MQTT_RC_SUCCESS
+            },
+            {ok, ConnAck, UserContext};
+        _SomeUser ->
+            ConnAck = #{
+                type => connack,
+                reason_code => ?MQTT_RC_NOT_AUTHORIZED
+            },
+            {ok, ConnAck, UserContext}
+    end;
+connect(#{ type := connect, properties := #{ authentication_method := _AuthMethod } = Props }, _IsSessionPresent, UserContext) ->
     % User logs on using extended authentication method
     _AuthData = maps:get(authentication_data, Props, undefined),
     % ... handle extended authentication handshake
@@ -98,7 +121,7 @@ connect(#{ type := connect, properties := #{ authentication_method := _AuthMetho
         reason_code => ?MQTT_RC_NOT_AUTHORIZED
     },
     {ok, ConnAck, UserContext};
-connect(_Packet, UserContext) ->
+connect(_Packet, _IsSessionPresent, UserContext) ->
     % Extended authentication
     ConnAck = #{
         type => connack,
@@ -110,29 +133,7 @@ connect(_Packet, UserContext) ->
 %% @doc Re-authentication. This is called when the client requests a re-authentication (or replies in a AUTH re-authentication).
 -spec reauth( mqtt_packet_map:mqtt_packet(), user_context()) -> {ok, mqtt_packet_map:mqtt_packet(), user_context()} | {error, term()}.
 reauth(#{ type := auth }, _UserContext) ->
-    {error, notsupported};
-reauth(#{ type := connect, username := U, password := P }, #{ user := undefined } = UserContext) when ?none(U), ?none(P) ->
-    ConnAck = #{
-        type => connack,
-        reason_code => ?MQTT_RC_SUCCESS
-    },
-    {ok, ConnAck, UserContext#{ user => undefined }};
-reauth(#{ type := connect, username := U, password := P }, #{ user := U } = UserContext) when not ?none(U), not ?none(P) ->
-    % User logs on using username/password
-    % ... check username/password
-    % ... log on user on UserContext
-    ConnAck = #{
-        type => connack,
-        reason_code => ?MQTT_RC_SUCCESS
-    },
-    {ok, ConnAck, UserContext#{ user => U }};
-reauth(_Packet, UserContext) ->
-    ConnAck = #{
-        type => connack,
-        reason_code => ?MQTT_RC_NOT_AUTHORIZED
-    },
-    {ok, ConnAck, UserContext}.
-
+    {error, notsupported}.
 
 
 -spec is_allowed( publish | subscribe, topic(), mqtt_packet_map:mqtt_packet(), user_context()) -> boolean().

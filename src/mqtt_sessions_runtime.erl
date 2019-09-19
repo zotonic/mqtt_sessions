@@ -71,13 +71,14 @@ new_user_context( Pool, ClientId, Options ) ->
     }.
 
 -spec connect( mqtt_packet_map:mqtt_packet(), boolean(), user_context()) -> {ok, mqtt_packet_map:mqtt_packet(), user_context()} | {error, term()}.
-connect(#{ type := connect, username := U, password := P }, _IsSessionPresent, UserContext) when ?none(U), ?none(P) ->
+connect(#{ type := connect, username := U, password := P }, IsSessionPresent, UserContext) when ?none(U), ?none(P) ->
     % Anonymous login - user must stay anonymous (regardless of IsSessionPresent)
     case maps:get(user, UserContext, undefined) of
         undefined ->
             ConnAck = #{
                 type => connack,
-                reason_code => ?MQTT_RC_SUCCESS
+                reason_code => ?MQTT_RC_SUCCESS,
+                session_present => IsSessionPresent
             },
             {ok, ConnAck, UserContext#{ user => undefined }};
         _SomeUser ->
@@ -95,14 +96,16 @@ connect(#{ type := connect, username := U, password := P }, IsSessionPresent, Us
             % ... log on user on UserContext
             ConnAck = #{
                 type => connack,
-                reason_code => ?MQTT_RC_SUCCESS
+                reason_code => ?MQTT_RC_SUCCESS,
+                session_present => IsSessionPresent
             },
             {ok, ConnAck, UserContext#{ user => U }};
         U when IsSessionPresent ->
             % ... check username/password
             ConnAck = #{
                 type => connack,
-                reason_code => ?MQTT_RC_SUCCESS
+                reason_code => ?MQTT_RC_SUCCESS,
+                session_present => IsSessionPresent
             },
             {ok, ConnAck, UserContext};
         _SomeUser ->

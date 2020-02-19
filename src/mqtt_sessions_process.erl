@@ -1,9 +1,9 @@
 %% @doc Process handling one single MQTT session.
 %%      Transports attaches and detaches from this session.
 %% @author Marc Worrell <marc@worrell.nl>
-%% @copyright 2018-2019 Marc Worrell
+%% @copyright 2018-2020 Marc Worrell
 
-%% Copyright 2018-2019 Marc Worrell
+%% Copyright 2018-2020 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -327,12 +327,7 @@ handle_incoming_with_context(Msg, Options, #state{ runtime = Runtime, user_conte
 handle_incoming(#{ type := connect } = Msg, Options, #state{ is_session_present = false } = State) ->
     % First time connect, accept.
     packet_connect(Msg, Options, State);
-handle_incoming(#{ type := connect, clean_start := true }, _Options, #state{ is_session_present = true } = State) ->
-    % To have a clean start of an existing session, this session should be killed first (which cleans up all subscriptions)
-    lager:info("Received connect with clean_start for existing MQTT session ~p ~s (~p)",
-               [State#state.pool, State#state.client_id, self()]),
-    {error, clean_start_existing};
-handle_incoming(#{ type := connect, clean_start := false } = Msg, Options, State) ->
+handle_incoming(#{ type := connect } = Msg, Options, State) ->
     % A client reopens a connection. Check if the credentials match with the current
     % session credentials (otherwise someone else might steal this session).
     packet_connect(Msg, Options, State);
@@ -406,7 +401,8 @@ packet_connect(#{ protocol_version := 5, protocol_name := <<"MQTT">>, properties
         protocol_version = 5,
         will = extract_will(Msg),
         session_expiry_interval = ExpiryInterval,
-        keep_alive = KeepAlive
+        keep_alive = KeepAlive,
+        incoming_data = <<>>
     },
     StateIfAccept1 = set_connection(Options, StateIfAccept),
     handle_connect_auth(Msg, Options, StateIfAccept1, State);
@@ -417,7 +413,8 @@ packet_connect(#{ protocol_version := 4, protocol_name := <<"MQTT">> } = Msg, Op
         protocol_version = 4,
         will = extract_will(Msg),
         session_expiry_interval = KeepAlive * 3,
-        keep_alive = KeepAlive
+        keep_alive = KeepAlive,
+        incoming_data = <<>>
     },
     StateIfAccept1 = set_connection(Options, StateIfAccept),
     handle_connect_auth(Msg, Options, StateIfAccept1, State);
@@ -438,8 +435,10 @@ handle_connect_auth(Msg, Options, StateIfAccept, #state{ runtime = Runtime, is_s
 %% @doc Accept the new connection with the given ConnAck or Auth message.
 %%      If an Auth message is sent then we need further authenticaion handshakes.
 %%      Only after a succesful connack we will set the is_session_present flag.
-handle_connect_auth_1({ok, #{ type := connack, reason_code := ?MQTT_RC_SUCCESS } = ConnAck, UserContext1}, _Msg, StateIfAccept, _State) ->
-    State1 = StateIfAccept#state{
+handle_connect_auth_1({ok, #{ type := connack, reason_code := ?MQTT_RC_SUCCESS } = ConnAck, UserContext1},
+        #{ clean_start := CleanStart }, StateIfAccept, _State) ->
+    StateCleaned = maybe_clean_start(CleanStart, StateIfAccept),
+    State1 = StateCleaned#state{
         user_context = UserContext1,
         is_session_present = true,
         will = undefined
@@ -464,6 +463,14 @@ handle_connect_auth_1({ok, #{ type := auth } = Auth, UserContext1}, _Msg, StateI
 handle_connect_auth_1({error, Reason}, Msg, _StateIfAccept, _State) ->
     lager:info("MQTT connect/auth refused (~p): ~p", [Reason, Msg]),
     {error, connection_refused}.
+
+
+%% @doc Drop all current subscriptions and pending messages on a clean start
+maybe_clean_start(false, State) ->
+    State;
+maybe_clean_start(true, #state{ pool = Pool } = State) ->
+    mqtt_sessions_router:unsubscribe_pid(Pool, self()),
+    State#state{ pending = queue:new() }.
 
 
 %% @doc Handle a publish request

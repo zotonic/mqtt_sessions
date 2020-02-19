@@ -32,12 +32,7 @@
         {ok, mqtt_sessions:session_ref()}.
 incoming_connect(Pool, #{ type := connect, client_id := <<>> } = Msg, Options) ->
     start_session(Pool, Msg, Options);
-incoming_connect(Pool, #{ type := connect, client_id := ClientId, clean_start := true } = Msg, Options) ->
-    % a. Close existing client (if is running)
-    % b. Start a new session for this client-id
-    mqtt_sessions_registry:kill_session(Pool, ClientId),
-    start_session(Pool, Msg, Options);
-incoming_connect(Pool, #{ type := connect, client_id := ClientId, clean_start := false } = Msg, Options) ->
+incoming_connect(Pool, #{ type := connect, client_id := ClientId } = Msg, Options) ->
     % Check client_id in connect message
     case mqtt_sessions_registry:find_session(Pool, ClientId) of
         {ok, SessionRef} ->

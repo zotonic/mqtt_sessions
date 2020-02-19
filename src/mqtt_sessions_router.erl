@@ -1,8 +1,8 @@
 %% @doc Process owning the MQTT topic router.
 %% @author Marc Worrell <marc@worrell.nl>
-%% @copyright 2018 Marc Worrell
+%% @copyright 2018-2020 Marc Worrell
 
-%% Copyright 2018 Marc Worrell
+%% Copyright 2018-2020 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@
     subscribe/4,
     subscribe/6,
     unsubscribe/3,
+    unsubscribe_pid/2,
     start_link/1,
     name/1
     ]).
@@ -138,6 +139,10 @@ publish_retained(Pool, TopicFilter, Subscriber, Options, SubscriberContext) ->
 unsubscribe( Pool, TopicFilter, Pid ) ->
     gen_server:call(name(Pool), {unsubscribe, TopicFilter, Pid}, infinity).
 
+-spec unsubscribe_pid( atom(), pid() ) -> ok.
+unsubscribe_pid( Pool, Pid ) ->
+    gen_server:cast(name(Pool), {unsubscribe_pid, Pid}).
+
 
 -spec start_link( atom() ) -> {ok, pid()} | {error, term()}.
 start_link( Pool ) ->
@@ -198,6 +203,8 @@ handle_call({unsubscribe, TopicFilter0, Pid}, _From,
 handle_call(Cmd, _From, State) ->
     {stop, {unknown_cmd, Cmd}, State}.
 
+handle_cast({unsubscribe_pid, Pid}, State) ->
+    {noreply, remove_subscriber(Pid, State)};
 handle_cast(Cmd, State) ->
     {stop, {unknown_cmd, Cmd}, State}.
 

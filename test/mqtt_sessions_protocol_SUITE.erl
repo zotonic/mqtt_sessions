@@ -25,7 +25,8 @@ end_per_testcase(_TestCase, _Config) ->
 all() ->
     [
         connect_disconnect_v5_test,
-        connect_reconnect_v5_test
+        connect_reconnect_v5_test,
+        connect_reconnect_clean_v5_test
     ].
 
 %%--------------------------------------------------------------------
@@ -120,6 +121,44 @@ connect_reconnect_v5_test(_Config) ->
             } = ConnAck,
             ok
     end,
+    % Subscribe to a topic
+    Subscribe = #{
+        type => subscribe,
+        topics => [ <<"reconnect_v5_test">> ]
+    },
+    {ok, SubMsg} = mqtt_packet_map:encode(5, Subscribe),
+    mqtt_sessions:incoming_data(SessionPid, SubMsg),
+    receive
+        {mqtt_transport, SessionPid, SubAckMsgBin} when is_binary(SubAckMsgBin) ->
+            {ok, {SubAck, <<>>}} = mqtt_packet_map:decode(SubAckMsgBin),
+            #{
+                type := suback,
+                acks := [ {ok, 0} ]
+            } = SubAck,
+            ok
+    end,
+    % Subscription should be there
+    PubMsg1 = #{
+        type => publish,
+        topic => <<"reconnect_v5_test">>,
+        payload => <<"hello1">>,
+        qos => 0
+    },
+    ok = mqtt_sessions:publish(PubMsg1, undefined),
+    receive
+        {mqtt_transport, SessionPid, PubMsgBin1}  when is_binary(PubMsgBin1) ->
+            {ok, {PubMsg1Received, <<>>}} = mqtt_packet_map:decode(PubMsgBin1),
+            #{
+                type := publish,
+                payload := <<"hello1">>
+            } = PubMsg1Received,
+            ok;
+        X ->
+            io:format("~p", [ X ])
+    after 10 ->
+        ct:fail(not_subscribed)
+    end,
+    % Reconnect without clean_start
     Reconnect = #{
         type => connect,
         protocol_name => <<"MQTT">>,
@@ -147,5 +186,141 @@ connect_reconnect_v5_test(_Config) ->
                 reason_code := 0
             } = ConnAck2,
             ok
+    end,
+    % Subscription should still be there
+    PubMsg2 = #{
+        type => publish,
+        topic => <<"reconnect_v5_test">>,
+        payload => <<"hello2">>,
+        qos => 0
+    },
+    ok = mqtt_sessions:publish(PubMsg2, undefined),
+    receive
+        {mqtt_transport, SessionPid, PubMsg2Bin}  when is_binary(PubMsg2Bin) ->
+            {ok, {PubMsg2Received, <<>>}} = mqtt_packet_map:decode(PubMsg2Bin),
+            #{
+                type := publish,
+                payload := <<"hello2">>
+            } = PubMsg2Received,
+            ok
+    after 10 ->
+        ct:fail(unsubscribed)
+    end,
+    ok.
+
+
+connect_reconnect_clean_v5_test(_Config) ->
+    Connect = #{
+        type => connect,
+        protocol_name => <<"MQTT">>,
+        protocol_version => 5,
+        clean_start => true,
+        client_id => <<"test3">>,
+        will_flag => false,
+        username => <<>>,
+        password => <<>>,
+        properties => #{
+        }
+    },
+    {ok, ConnectMsg} = mqtt_packet_map:encode(5, Connect),
+    Options = #{
+        transport => self()
+    },
+    {ok, {SessionPid, <<>>}} = mqtt_sessions:incoming_connect(ConnectMsg, Options),
+    true = is_pid(SessionPid),
+    receive
+        {mqtt_transport, SessionPid, MsgBin} when is_binary(MsgBin) ->
+            {ok, {ConnAck, <<>>}} = mqtt_packet_map:decode(MsgBin),
+            #{
+                type := connack,
+                session_present := false,
+                reason_code := 0
+            } = ConnAck,
+            ok
+    end,
+    % Subscribe to a topic
+    Subscribe = #{
+        type => subscribe,
+        topics => [ <<"reconnect_clean_v5_test">> ]
+    },
+    {ok, SubMsg} = mqtt_packet_map:encode(5, Subscribe),
+    mqtt_sessions:incoming_data(SessionPid, SubMsg),
+    receive
+        {mqtt_transport, SessionPid, SubAckMsgBin} when is_binary(SubAckMsgBin) ->
+            {ok, {SubAck, <<>>}} = mqtt_packet_map:decode(SubAckMsgBin),
+            #{
+                type := suback,
+                acks := [ {ok, 0} ]
+            } = SubAck,
+            ok
+    end,
+    % Subscription should be there
+    PubMsg1 = #{
+        type => publish,
+        topic => <<"reconnect_clean_v5_test">>,
+        payload => <<"hello1">>,
+        qos => 0
+    },
+    ok = mqtt_sessions:publish(PubMsg1, undefined),
+    receive
+        {mqtt_transport, SessionPid, PubMsgBin1}  when is_binary(PubMsgBin1) ->
+            {ok, {PubMsg1Received, <<>>}} = mqtt_packet_map:decode(PubMsgBin1),
+            #{
+                type := publish,
+                payload := <<"hello1">>
+            } = PubMsg1Received,
+            ok;
+        X ->
+            io:format("~p", [ X ])
+    after 10 ->
+        ct:fail(not_subscribed)
+    end,
+    % Reconnect with clean_start
+    Reconnect = #{
+        type => connect,
+        protocol_name => <<"MQTT">>,
+        protocol_version => 5,
+        clean_start => true,
+        client_id => <<"test3">>,
+        will_flag => false,
+        username => <<>>,
+        password => <<>>,
+        properties => #{
+        }
+    },
+    {ok, ReconnectMsg} = mqtt_packet_map:encode(5, Reconnect),
+    {ok, {SessionPid, <<>>}} = mqtt_sessions:incoming_connect(ReconnectMsg, Options),
+    %
+    % We have reconnected to the existing session, check the connack
+    % for the 'session_present' flag.
+    %
+    receive
+        {mqtt_transport, SessionPid, MsgBin2}  when is_binary(MsgBin2) ->
+            {ok, {ConnAck2, <<>>}} = mqtt_packet_map:decode(MsgBin2),
+            #{
+                type := connack,
+                session_present := true,
+                reason_code := 0
+            } = ConnAck2,
+            ok
+    end,
+    % Subscription should be gone
+    PubMsg2 = #{
+        type => publish,
+        topic => <<"reconnect_clean_v5_test">>,
+        payload => <<"hello2">>,
+        qos => 0
+    },
+    ok = mqtt_sessions:publish(PubMsg2, undefined),
+    receive
+        {mqtt_transport, SessionPid, PubMsg2Bin}  when is_binary(PubMsg2Bin) ->
+            {ok, {PubMsg2Received, <<>>}} = mqtt_packet_map:decode(PubMsg2Bin),
+            #{
+                type := publish,
+                payload := <<"hello2">>
+            } = PubMsg2Received,
+            ct:fail(still_subscribed)
+    after 20 ->
+        ok
     end,
     ok.

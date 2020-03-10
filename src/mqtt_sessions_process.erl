@@ -226,7 +226,7 @@ handle_call({incoming_data, NewData, ConnectionPid}, _From, #state{ incoming_dat
     end;
 handle_call({incoming_data, _NewData, ConnectionPid}, _From, State) ->
     lager:info("MQTT session incoming data from ~p, expected from ~p", [ConnectionPid, State#state.connection_pid]),
-    {reply, {error, wrong_connection, State}};
+    {reply, {error, wrong_connection}, State};
 handle_call(Cmd, _From, State) ->
     {stop, {unknown_cmd, Cmd}, State}.
 

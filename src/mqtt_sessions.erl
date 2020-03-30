@@ -41,6 +41,8 @@
     update_user_context/2,
     update_user_context/3,
 
+    get_transport/1,
+
     publish/2,
     publish/3,
     publish/4,
@@ -175,6 +177,10 @@ update_user_context(Pool, ClientId, Fun) ->
         {ok, Pid} -> mqtt_sessions_process:update_user_context(Pid, Fun);
         {error, _} = Error -> Error
     end.
+
+-spec get_transport( pid() ) -> {ok, pid()} | {error, notransport | noproc}.
+get_transport(SessionPid) ->
+    mqtt_sessions_process:get_transport(SessionPid).
 
 -spec publish( mqtt_packet_map:mqtt_message(), term() ) -> ok | {error, eacces | invalid_topic}.
 publish(#{ type := publish } = Msg, UserContext) ->

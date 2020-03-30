@@ -37,6 +37,7 @@
     set_user_context/2,
     update_user_context/2,
 
+    get_transport/1,
     kill/1,
     incoming_connect/3,
     incoming_data/2,
@@ -140,6 +141,14 @@ update_user_context(Pid, Fun) ->
             {error, noproc}
     end.
 
+-spec get_transport( pid() ) -> {ok, pid()} | {error, notransport | noproc}.
+get_transport(Pid) ->
+    try
+        gen_server:call(Pid, get_transport, infinity)
+    catch
+        exit:{noproc, _} ->
+            {error, noproc}
+    end.
 
 -spec kill( pid() ) -> ok.
 kill(Pid) when is_pid(Pid) ->
@@ -214,6 +223,12 @@ handle_call({set_user_context, UserContext}, _From, State) ->
     {reply, ok, State#state{ user_context = UserContext }};
 handle_call({update_user_context, Fun}, _From, #state{ user_context = UserContext} = State) ->
     {reply, ok, State#state{ user_context = Fun(UserContext) }};
+
+handle_call(get_transport, _From, #state{ transport = undefined } = State) ->
+    {reply, {error, notransport}, State};
+handle_call(get_transport, _From, #state{ transport = TransportPid } = State) ->
+    {reply, {ok, TransportPid}, State};
+
 handle_call({incoming_data, NewData, ConnectionPid}, _From, #state{ incoming_data = Data, connection_pid = ConnectionPid } = State) ->
     Data1 = << Data/binary, NewData/binary >>,
     case handle_incoming_data(Data1, State) of
@@ -944,7 +959,7 @@ encode(ProtocolVersion, Ms) when is_list(Ms) ->
     iolist_to_binary([ encode(ProtocolVersion, M) || M <- Ms ]).
 
 
-%% @doc Send (and maybe queue) a message back via the current transport.
+%% @doc Set the new connection, disconnect existing transport.
 set_connection(#{ connection_pid := ConnectionPid, transport := Transport }, State) ->
     case State#state.connection_pid of
         ConnectionPid ->
@@ -952,7 +967,7 @@ set_connection(#{ connection_pid := ConnectionPid, transport := Transport }, Sta
         undefined ->
             set_connection_1(ConnectionPid, Transport, State);
         OldConnectionPid ->
-            erlang:exit(OldConnectionPid, disconnect),
+            OldConnectionPid ! {mqtt_transport, self(), disconnect},
             set_connection_1(ConnectionPid, Transport, State)
     end.
 

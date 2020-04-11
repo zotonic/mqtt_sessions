@@ -107,10 +107,11 @@ subscribe( Pool, Topic, Pid, SubscriberContext) when is_pid(Pid) ->
 subscribe( Pool, TopicFilter, Subscriber, OwnerPid, Options, SubscriberContext ) when is_pid(OwnerPid), is_map(Options) ->
     case is_valid_subscriber(Subscriber) of
         true ->
-            case gen_server:call(name(Pool), {subscribe, TopicFilter, Subscriber, OwnerPid, Options}, infinity) of
+            Pool1 = maybe_map_to_default_pool(Pool, TopicFilter),
+            case gen_server:call(name(Pool1), {subscribe, TopicFilter, Subscriber, OwnerPid, Options}, infinity) of
                 {ok, IsNew} ->
                     % Check retained messages, publish to the Subscriber
-                    maybe_publish_retained(Pool, IsNew, TopicFilter, Subscriber, Options, SubscriberContext),
+                    maybe_publish_retained(Pool1, IsNew, TopicFilter, Subscriber, Options, SubscriberContext),
                     ok;
                 {error, _} = Error ->
                     Error
@@ -137,7 +138,8 @@ publish_retained(Pool, TopicFilter, Subscriber, Options, SubscriberContext) ->
 
 -spec unsubscribe( atom(), list(), pid() ) -> ok | {error, notfound}.
 unsubscribe( Pool, TopicFilter, Pid ) ->
-    gen_server:call(name(Pool), {unsubscribe, TopicFilter, Pid}, infinity).
+    Pool1 = maybe_map_to_default_pool(Pool, TopicFilter),
+    gen_server:call(name(Pool1), {unsubscribe, TopicFilter, Pid}, infinity).
 
 -spec unsubscribe_pid( atom(), pid() ) -> ok.
 unsubscribe_pid( Pool, Pid ) ->
@@ -260,3 +262,8 @@ remove_subscriber(Pid, #state{ router = Router, monitors = Monitors } = State) -
 -spec name( atom() ) -> atom().
 name( Pool ) ->
     list_to_atom(atom_to_list(Pool) ++ "$router").
+
+%% @doc For subscribtions to a $SYS topic, we map to the default pool.
+-spec maybe_map_to_default_pool( atom(), mqtt_sessions:topic()) -> atom().
+maybe_map_to_default_pool(_Pool, [<<"$SYS">> | _]) -> ?MQTT_SESSIONS_DEFAULT;
+maybe_map_to_default_pool(Pool, _Topic) -> Pool.

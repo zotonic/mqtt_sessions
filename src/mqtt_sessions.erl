@@ -34,7 +34,7 @@
     fetch_queue/1,
     fetch_queue/2,
 
-    count_sessions/1,
+    session_count/1,
     router_info/1,
 
     get_user_context/1,
@@ -136,9 +136,9 @@ find_session( ClientId ) ->
 find_session(Pool, ClientId) ->
     mqtt_sessions_registry:find_session(Pool, ClientId).
 
--spec count_sessions( atom() ) -> integer.
-count_sessions(Pool) ->
-    mqtt_sessions_process_sup:count_sessions(Pool).
+-spec session_count( atom() ) -> integer.
+session_count(Pool) ->
+    mqtt_sessions_process_sup:session_count(Pool).
 
 -spec router_info( atom() ) -> list().
 router_info(Pool) ->

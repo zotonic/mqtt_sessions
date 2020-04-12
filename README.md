@@ -18,6 +18,10 @@ Note that this library does not handle TCP/IP connections. It handles the
 complete MQTT session logic. Other libraries are used for transporting the
 MQTT packets to/from external clients.
 
+When a subscription is made to a $SYS topic the subscriber is mapped to
+the default pool. This makes it possible to share system information
+between different pools.
+
 ### TODO
 
 1. Add protections

@@ -28,7 +28,8 @@
     unsubscribe/3,
     unsubscribe_pid/2,
     start_link/1,
-    name/1
+    name/1,
+    info/1
     ]).
 
 -export([
@@ -262,6 +263,10 @@ remove_subscriber(Pid, #state{ router = Router, monitors = Monitors } = State) -
 -spec name( atom() ) -> atom().
 name( Pool ) ->
     list_to_atom(atom_to_list(Pool) ++ "$router").
+
+-spec info( atom() ) -> list().
+info( Pool ) ->
+    router:info(Pool).
 
 %% @doc For subscribtions to a $SYS topic, we map to the default pool.
 -spec maybe_map_to_default_pool( atom(), mqtt_sessions:topic()) -> atom().

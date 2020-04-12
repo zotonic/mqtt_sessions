@@ -25,7 +25,8 @@
     new_session/3,
     start_link/1,
     init/1,
-    name/1
+    name/1,
+    count_sessions/1
     ]).
 
 
@@ -36,6 +37,12 @@ new_session(Pool, <<>>, SessionOptions) ->
 new_session(Pool, ClientId, SessionOptions) when is_binary(ClientId) ->
     {ok, Pid} = supervisor:start_child(name(Pool), [ ClientId, SessionOptions ]),
     {ok, {Pid, ClientId}}.
+
+-spec count_sessions( atom() ) -> integer().
+count_sessions(Pool) ->
+    Props = supervisor:count_children(name(Pool)),
+    {active, N} = proplists:lookup(active, Props),
+    N.
 
 -spec start_link( atom() ) -> {ok, pid()} | {error, term()}.
 start_link( Pool ) ->

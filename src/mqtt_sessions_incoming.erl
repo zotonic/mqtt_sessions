@@ -59,8 +59,8 @@ send_connack_error(ReasonCode, #{ protocol_version := PV }, Options) ->
             Pid ! {mqtt_transport, self(), AckMsgB},
             Pid ! {mqtt_transport, self(), disconnect};
         F when is_function(F) ->
-            F(self(), AckMsgB),
-            F(self(), disconnect)
+            F(AckMsgB),
+            F(disconnect)
     end.
 
 -spec start_session( atom(), mqtt_packet_map:mqtt_packet(), mqtt_sessions:msg_options() ) -> {ok, pid()}.

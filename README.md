@@ -1,4 +1,4 @@
-[![Build Status](https://travis-ci.org/zotonic/mqtt_sessions.svg?branch=master)](https://travis-ci.org/zotonic/mqtt_sessions)
+![Test](https://github.com/zotonic/mqtt_sessions/workflows/Test/badge.svg)
 
 # MQTT v5 server side sessions and routing
 

@@ -24,6 +24,7 @@
 
     new_user_context/3,
     connect/4,
+    control_message/3,
     reauth/2,
     is_allowed/4,
     is_valid_message/3
@@ -40,6 +41,7 @@
 -callback reauth( mqtt_packet_map:mqtt_packet(), user_context() ) -> {ok, mqtt_packet_map:mqtt_packet(), user_context()} | {error, term()}.
 -callback is_allowed( publish | subscribe, topic(), mqtt_packet_map:mqtt_packet(), user_context()) -> boolean().
 -callback is_valid_message( mqtt_packet_map:mqtt_packet(), mqtt_sessions:msg_options(), user_context() ) -> boolean().
+-callback control_message( topic(), mqtt_packet_map:mqtt_packet(), user_context() ) -> {ok, user_context()}.
 
 -export_type([
     user_context/0,
@@ -69,6 +71,10 @@ new_user_context( Pool, ClientId, Options ) ->
         peer_ip => maps:get(peer_ip, Options, undefined),
         user => undefined
     }.
+
+-spec control_message( topic(), mqtt_packet_map:mqtt_packet(), user_context() ) -> {ok, user_context()}.
+control_message(_Topic, _Packet, UserContext) ->
+    {ok, UserContext}.
 
 -spec connect( mqtt_packet_map:mqtt_packet(), boolean(), mqtt_session:msg_options(), user_context()) -> {ok, mqtt_packet_map:mqtt_packet(), user_context()} | {error, term()}.
 connect(#{ type := connect, username := U, password := P }, IsSessionPresent, Options, UserContext) when ?none(U), ?none(P) ->

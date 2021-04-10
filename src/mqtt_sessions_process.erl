@@ -491,20 +491,21 @@ maybe_clean_start(true, #state{ pool = Pool } = State) ->
 %% @doc Handle a publish request
 packet_publish(#{ topic := Topic, qos := 0 } = Msg,
         #state{ runtime = Runtime, user_context = UCtx, client_id = ClientId } = State) ->
-    case Runtime:is_allowed(publish, Topic, Msg, UCtx) of
-        true ->
+    case Topic of
+        [ <<"$client">>, ClientId | Rest ] ->
             MsgPub = mqtt_sessions_payload:decode(Msg#{ dup => false }),
-            case Topic of
-                [ <<"$client">>, ClientId | Rest ] ->
-                    {ok, UCtx1} = Runtime:control_message(Rest, MsgPub, UCtx),
-                    {ok, State#state{ user_context = UCtx1 }};
-                _ ->
+            {ok, UCtx1} = Runtime:control_message(Rest, MsgPub, UCtx),
+            {ok, State#state{ user_context = UCtx1 }};
+        _ ->
+            case Runtime:is_allowed(publish, Topic, Msg, UCtx) of
+                true ->
+                    MsgPub = mqtt_sessions_payload:decode(Msg#{ dup => false }),
                     {ok, JobPid} = mqtt_sessions_router:publish(State#state.pool, Topic, MsgPub, UCtx),
                     self() ! {publish_job, JobPid},
+                    {ok, State};
+                false ->
                     {ok, State}
-            end;
-        false ->
-            {ok, State}
+            end
     end;
 packet_publish(#{ topic := Topic, qos := 1, dup := Dup, packet_id := PacketId } = Msg,
         #state{ runtime = Runtime, user_context = UCtx, awaiting_rel = WaitRel } = State) ->

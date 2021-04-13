@@ -240,7 +240,7 @@ handle_call({incoming_data, NewData, ConnectionPid}, _From, #state{ incoming_dat
             {reply, {error, Reason}, force_disconnect(State)}
     end;
 handle_call({incoming_data, _NewData, ConnectionPid}, _From, State) ->
-    lager:info("MQTT session incoming data from ~p, expected from ~p", [ConnectionPid, State#state.connection_pid]),
+    lager:debug("MQTT session incoming data from ~p, expected from ~p", [ConnectionPid, State#state.connection_pid]),
     {reply, {error, wrong_connection}, State};
 handle_call(Cmd, _From, State) ->
     {stop, {unknown_cmd, Cmd}, State}.
@@ -465,7 +465,7 @@ handle_connect_auth_1({ok, #{ type := connack, reason_code := ?MQTT_RC_SUCCESS }
     {ok, State3};
 handle_connect_auth_1({ok, #{ type := connack, reason_code := ReasonCode } = ConnAck, _UserContext1}, _Msg, StateIfAccept, _State) ->
     _ = reply_connack(ConnAck, StateIfAccept),
-    lager:info("MQTT connect/auth refused (~p): ~p", [ReasonCode, ConnAck]),
+    lager:debug("MQTT connect/auth refused (~p): ~p", [ReasonCode, ConnAck]),
     {error, connection_refused};
 handle_connect_auth_1({ok, #{ type := auth } = Auth, UserContext1}, _Msg, StateIfAccept, _State) ->
     State1 = StateIfAccept#state{

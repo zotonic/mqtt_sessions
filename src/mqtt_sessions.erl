@@ -136,7 +136,7 @@ find_session( ClientId ) ->
 find_session(Pool, ClientId) ->
     mqtt_sessions_registry:find_session(Pool, ClientId).
 
--spec session_count( atom() ) -> integer.
+-spec session_count( atom() ) -> integer().
 session_count(Pool) ->
     mqtt_sessions_process_sup:session_count(Pool).
 

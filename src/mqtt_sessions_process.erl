@@ -63,7 +63,7 @@
 
 -define(KILL_TIMEOUT, 5000).
 
--type packet_id() :: 0..?MAX_PACKET_ID.
+-type packet_id() :: 0..65535.          % ?MAX_PACKET_ID
 
 -record(state, {
     protocol_version :: mqtt_packet_map:mqtt_version(),

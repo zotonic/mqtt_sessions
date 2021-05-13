@@ -43,7 +43,7 @@
 
 
 % Default expiry interval for retained messages
--define(MESSAGE_EXPIRY_INTERVAL, 24*3600).
+-define(MESSAGE_EXPIRY_INTERVAL, 3600).
 
 % Remove expired messages every minute
 -define(PERIODIC_CLEANUP, 60000).

@@ -117,11 +117,14 @@ init([ Pool ]) ->
     }}.
 
 handle_call({retain, #{ topic := Topic } = Msg, PublisherContext}, _From, #state{ topics = Topics, messages = Messages } = State) ->
-    Ref = erlang:make_ref(),
     Props = maps:get(properties, Msg, #{}),
     ExpiryInterval = maps:get(message_expiry_interval, Props, ?MESSAGE_EXPIRY_INTERVAL),
     Expire = mqtt_sessions_timestamp:timestamp() + ExpiryInterval,
     QoS = maps:get(qos, Msg, 0),
+    Ref = case ets:lookup(Topics, Topic) of
+              [] -> erlang:make_ref();
+              [{_, _, _, R}] -> R
+          end,
     ets:insert(Messages, {Ref, Msg, PublisherContext}),
     ets:insert(Topics, {Topic, QoS, Expire, Ref}),
     {reply, ok, State};

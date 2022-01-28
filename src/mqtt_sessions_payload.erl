@@ -1,7 +1,7 @@
 %% @author Marc Worrell <marc@worrell.nl>
-%% @copyright 2018 Marc Worrell
+%% @copyright 2018-2022 Marc Worrell
 
-%% Copyright 2018 Marc Worrell
+%% Copyright 2018-2022 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@
     encode/1
 ]).
 
+-include_lib("kernel/include/logger.hrl").
 
 -spec encode( mqtt_packet_map:mqtt_packet() ) -> mqtt_packet_map:mqtt_packet().
 encode(#{ type := publish } = Msg) ->
@@ -97,7 +98,7 @@ guess_mime({{Y,M,D},{H,I,S}}) when
 guess_mime(T) when is_tuple(T), is_atom(element(1, T)) ->
     <<"application/json">>;
 guess_mime(X) ->
-    lager:info("MQTT payload unknown type for guess_mime: ~p", [X]),
+    ?LOG_INFO("MQTT payload unknown type for guess_mime: ~p", [X]),
     <<"binary/octet-stream">>.
 
 

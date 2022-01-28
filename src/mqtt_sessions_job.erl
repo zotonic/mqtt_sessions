@@ -1,8 +1,8 @@
 %% @doc Sidejobs for handling topic subscriptions
 %% @author Marc Worrell <marc@worrell.nl>
-%% @copyright 2018 Marc Worrell
+%% @copyright 2018-2022 Marc Worrell
 
-%% Copyright 2018 Marc Worrell
+%% Copyright 2018-2022 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@
 ]).
 
 
+-include_lib("kernel/include/logger.hrl").
 -include_lib("router/include/router.hrl").
 -include_lib("../include/mqtt_sessions.hrl").
 
@@ -41,7 +42,7 @@ publish(Pool, Topic, Routes, Msg, PublisherContext) ->
         {ok, _JobPid} = OK ->
             OK;
         {error, overload} ->
-            lager:debug("MQTT sidejob overload, delaying job ~p ...", [ Topic ]),
+            ?LOG_DEBUG("MQTT sidejob overload, delaying job ~p ...", [ Topic ]),
             timer:sleep(100),
             sidejob_supervisor:spawn(
                     ?MQTT_SESSIONS_JOBS,
@@ -60,7 +61,7 @@ publish_retained(Pool, TopicFilter, Ms, Subscriber, Options, SubscriberContext) 
         {ok, _JobPid} ->
             ok;
         {error, overload} ->
-            lager:debug("MQTT sidejob overload, delaying retained job ~p ...", [ TopicFilter ]),
+            ?LOG_DEBUG("MQTT sidejob overload, delaying retained job ~p ...", [ TopicFilter ]),
             timer:sleep(100),
             sidejob_supervisor:spawn(
                     ?MQTT_SESSIONS_JOBS,

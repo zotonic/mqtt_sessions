@@ -15,6 +15,6 @@
     ]},
     {modules, []},
     {maintainers, ["Zotonic Team"]},
-    {licenses, ["Apache 2.0"]},
+    {licenses, ["Apache-2.0"]},
     {links, [ {"GitHub","https://github.com/zotonic/mqtt_sessions"} ]}
 ]}.

@@ -1,9 +1,9 @@
 %% @doc Process handling one single MQTT session.
 %%      Transports attaches and detaches from this session.
 %% @author Marc Worrell <marc@worrell.nl>
-%% @copyright 2018-2020 Marc Worrell
+%% @copyright 2018-2022 Marc Worrell
 
-%% Copyright 2018-2020 Marc Worrell
+%% Copyright 2018-2022 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -110,8 +110,9 @@
 }).
 
 
--include_lib("../include/mqtt_sessions.hrl").
+-include_lib("kernel/include/logger.hrl").
 -include_lib("mqtt_packet_map/include/mqtt_packet_map.hrl").
+-include_lib("../include/mqtt_sessions.hrl").
 
 
 -spec get_user_context( pid() ) -> {ok, term()} | {error, noproc}.
@@ -236,11 +237,11 @@ handle_call({incoming_data, NewData, ConnectionPid}, _From, #state{ incoming_dat
             {reply, ok, StateRest#state{ keep_alive_counter = 3, incoming_data = Rest }};
         {error, Reason} when is_atom(Reason) ->
             % illegal packet, disconnect and wait for new connection
-            lager:info("Error decoding incoming data: ~p", [ Reason ]),
+            ?LOG_INFO("Error decoding incoming data: ~p", [ Reason ]),
             {reply, {error, Reason}, force_disconnect(State)}
     end;
 handle_call({incoming_data, _NewData, ConnectionPid}, _From, State) ->
-    lager:debug("MQTT session incoming data from ~p, expected from ~p", [ConnectionPid, State#state.connection_pid]),
+    ?LOG_DEBUG("MQTT session incoming data from ~p, expected from ~p", [ConnectionPid, State#state.connection_pid]),
     {reply, {error, wrong_connection}, State};
 handle_call(Cmd, _From, State) ->
     {stop, {unknown_cmd, Cmd}, State}.
@@ -261,7 +262,7 @@ handle_info({mqtt_msg, #{ type := publish } = MqttMsg}, State) ->
     {noreply, State1};
 
 handle_info({keep_alive, Ref}, #state{ keep_alive_counter = 0, keep_alive_ref = Ref } = State) ->
-    lager:debug("MQTT past keep_alive, disconnecting transport"),
+    ?LOG_DEBUG("MQTT past keep_alive, disconnecting transport"),
     {noreply, force_disconnect(State)};
 handle_info({keep_alive, Ref}, #state{ keep_alive_counter = N, keep_alive_ref = Ref } = State) ->
     erlang:send_after(State#state.keep_alive * 500, self(), {keep_alive, Ref}),
@@ -299,7 +300,7 @@ handle_info({'DOWN', _Mref, process, Pid, _Reason}, State) ->
     {noreply, State1};
 
 handle_info(Info, State) ->
-    lager:info("Unknown info message ~p", [Info]),
+    ?LOG_INFO("Unknown info message ~p", [Info]),
     {noreply, State}.
 
 code_change(_Vsn, State, _Extra) ->
@@ -350,12 +351,12 @@ handle_incoming(#{ type := connect } = Msg, Options, State) ->
 handle_incoming(#{ type := auth } = Msg, _Options, State) ->
     packet_connect_auth(Msg, State);
 handle_incoming(#{ type := Type }, _Options, #state{ connection_pid = undefined } = State) ->
-    lager:info("Dropping packet for MQTT session ~p ~s (~p) for receiving ~p when not connected.",
+    ?LOG_INFO("Dropping packet for MQTT session ~p ~s (~p) for receiving ~p when not connected.",
                [State#state.pool, State#state.client_id, self(), Type]),
     {error, not_connected};
 handle_incoming(#{ type := Type }, _Options, #state{ is_session_present = false } = State) ->
     % Only AUTH and CONNECT before the CONNACK
-    lager:info("Killing MQTT session ~p ~s (~p) for receiving ~p when no session started.",
+    ?LOG_INFO("Killing MQTT session ~p ~s (~p) for receiving ~p when no session started.",
                [State#state.pool, State#state.client_id, self(), Type]),
     {stop, State};
 handle_incoming(#{ type := publish } = Msg, _Options, State) ->
@@ -388,7 +389,7 @@ handle_incoming(#{ type := disconnect } = Msg, _Options, State) ->
     packet_disconnect(Msg, State);
 
 handle_incoming(#{ type := Type }, _Options, State) ->
-    lager:info("MQTT dropping unhandled packet with type ~p", [Type]),
+    ?LOG_INFO("MQTT dropping unhandled packet with type ~p", [Type]),
     {ok, State}.
 
 % ---------------------------------------------------------------------------------------
@@ -466,7 +467,7 @@ handle_connect_auth_1({ok, #{ type := connack, reason_code := ?MQTT_RC_SUCCESS }
     {ok, State3};
 handle_connect_auth_1({ok, #{ type := connack, reason_code := ReasonCode } = ConnAck, _UserContext1}, _Msg, StateIfAccept, _State) ->
     _ = reply_connack(ConnAck, StateIfAccept),
-    lager:debug("MQTT connect/auth refused (~p): ~p", [ReasonCode, ConnAck]),
+    ?LOG_DEBUG("MQTT connect/auth refused (~p): ~p", [ReasonCode, ConnAck]),
     {error, connection_refused};
 handle_connect_auth_1({ok, #{ type := auth } = Auth, UserContext1}, _Msg, StateIfAccept, _State) ->
     State1 = StateIfAccept#state{
@@ -477,7 +478,7 @@ handle_connect_auth_1({ok, #{ type := auth } = Auth, UserContext1}, _Msg, StateI
                                  State2#state.session_expiry_interval, State2#state.user_context),
     {ok, State2};
 handle_connect_auth_1({error, Reason}, Msg, _StateIfAccept, _State) ->
-    lager:info("MQTT connect/auth refused (~p): ~p", [Reason, Msg]),
+    ?LOG_INFO("MQTT connect/auth refused (~p): ~p", [Reason, Msg]),
     {error, connection_refused}.
 
 
@@ -612,7 +613,7 @@ packet_pubrel(#{ packet_id := PacketId, reason_code := ?MQTT_RC_SUCCESS }, #stat
     end;
 packet_pubrel(#{ packet_id := PacketId, reason_code := RC }, #state{ awaiting_rel = WaitRel } = State) ->
     % Error server/client out of sync - remove the wait-rel for this packet_id
-    lager:info("PUBREL with reason ~p for packet ~p",
+    ?LOG_INFO("PUBREL with reason ~p for packet ~p",
                [ RC, PacketId ]),
     WaitRel1 = maps:remove(PacketId, WaitRel),
     {ok, State#state{ awaiting_rel = WaitRel1 }}.
@@ -624,7 +625,7 @@ packet_puback(#{ packet_id := PacketId }, #state{ awaiting_ack = WaitAck } = Sta
         {ok, {_MsgNr, puback, _Msg}} ->
             maps:remove(PacketId, WaitAck);
         {ok, {_MsgNr, Wait, Msg}} ->
-            lager:warning("PUBACK for message ~p waiting for ~p. Message: ~p",
+            ?LOG_WARNING("PUBACK for message ~p waiting for ~p. Message: ~p",
                           [ PacketId, Wait, Msg ]),
             maps:remove(PacketId, WaitAck);
         error ->
@@ -640,7 +641,7 @@ packet_pubrec(#{ packet_id := PacketId, reason_code := RC }, #state{ awaiting_ac
         {ok, {_MsgNr, pubcomp, _Msg}} ->
             maps:remove(PacketId, WaitAck);
         {ok, {_MsgNr, Wait, Msg}} ->
-            lager:warning("PUBREC for message ~p waiting for ~p. Message: ~p",
+            ?LOG_WARNING("PUBREC for message ~p waiting for ~p. Message: ~p",
                           [ PacketId, Wait, Msg ]),
             maps:remove(PacketId, WaitAck);
         error ->
@@ -654,7 +655,7 @@ packet_pubrec(#{ packet_id := PacketId }, #state{ awaiting_ack = WaitAck } = Sta
         {ok, {_MsgNr, pubcomp, _Msg}} ->
             {WaitAck, ?MQTT_RC_SUCCESS};
         {ok, {_MsgNr, Wait, Msg}} ->
-            lager:warning("PUBREC for message ~p waiting for ~p. Message: ~p",
+            ?LOG_WARNING("PUBREC for message ~p waiting for ~p. Message: ~p",
                           [ PacketId, Wait, Msg ]),
             {maps:remove(PacketId, WaitAck), ?MQTT_RC_PACKET_ID_NOT_FOUND};
         error ->
@@ -674,7 +675,7 @@ packet_pubcomp(#{ packet_id := PacketId }, #state{ awaiting_ack = WaitAck } = St
         {ok, {_MsgNr, pubcomp, _Msg}} ->
             maps:remove(PacketId, WaitAck);
         {ok, {_MsgNr, Wait, Msg}} ->
-            lager:warning("PUBREC for message ~p waiting for ~p. Message: ~p",
+            ?LOG_WARNING("PUBREC for message ~p waiting for ~p. Message: ~p",
                           [ PacketId, Wait, Msg ]),
             maps:remove(PacketId, WaitAck);
         error ->

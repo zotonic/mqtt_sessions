@@ -464,8 +464,6 @@ handle_connect_auth_1({ok, #{ type := connack, reason_code := ?MQTT_RC_SUCCESS }
                        ConnAck#{ session_present => IsSessionPresent andalso not (CleanStart =:= true) }
                end,
 
-    io:fwrite(standard_error, "~p~n", [ConnAck1]),
-
     State1 = StateCleaned#state{
         user_context = UserContext1,
         is_session_present = true,

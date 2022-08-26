@@ -453,14 +453,24 @@ handle_connect_auth(Msg, Options, StateIfAccept, #state{ runtime = Runtime, is_s
 %%      If an Auth message is sent then we need further authenticaion handshakes.
 %%      Only after a succesful connack we will set the is_session_present flag.
 handle_connect_auth_1({ok, #{ type := connack, reason_code := ?MQTT_RC_SUCCESS } = ConnAck, UserContext1},
-        #{ clean_start := CleanStart }, StateIfAccept, _State) ->
+        #{ clean_start := CleanStart }, StateIfAccept, #state{ is_session_present = IsSessionPresent }) ->
     StateCleaned = maybe_clean_start(CleanStart, StateIfAccept),
+    
+    %% Set the session_present flag to true, when the runtime omitted it, and when there is a 
+    %% session present.
+    ConnAck1 = case maps:find(session_present, ConnAck) of
+                   {ok, _} -> ConnAck;
+                   error ->
+                       ConnAck#{ session_present => IsSessionPresent andalso not (CleanStart =:= true) }
+               end,
+
     State1 = StateCleaned#state{
         user_context = UserContext1,
         is_session_present = true,
         will = undefined
     },
-    State2 = reply_connack(ConnAck, State1),
+
+    State2 = reply_connack(ConnAck1, State1),
     mqtt_sessions_will:connected(State2#state.will_pid, StateIfAccept#state.will,
                                  State2#state.session_expiry_interval, State2#state.user_context),
     State3 = resend_unacknowledged( cleanup_pending(State2) ),

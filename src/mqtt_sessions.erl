@@ -107,6 +107,8 @@
 
 -define(SIDEJOBS_PER_SESSION, 20).
 -define(DEFAULT_CALL_TIMEOUT, 5000).
+-define(COLON, <<":">>).
+-define(AT, <<"@">>).
 
 -include("../include/mqtt_sessions.hrl").
 -include_lib("mqtt_packet_map/include/mqtt_packet_map.hrl").
@@ -437,16 +439,35 @@ connect_pool(Pool, Msg) ->
     end.
 
 username_to_pool(#{ type := connect, username := Username }) when is_binary(Username) ->
-    Runtime = runtime(),
-    case binary:split(Username, <<":">>) of
-        [VHost, _LocalUsername] ->
-            Runtime:vhost_pool(VHost);
-        _ ->
-            undefined
-    end;
+    VHost = vhost_from_username(Username),
+    vhost_pool(VHost);
 username_to_pool(_ConnectMsg) ->
     undefined.
 
+vhost_pool(VHost) when is_binary(VHost) ->
+    Runtime = runtime(),
+    Runtime:vhost_pool(VHost);
+vhost_pool(_VHost) ->
+    undefined.
+
+vhost_from_username(Username) ->
+    Delimetr = [<<X>> || <<X>> <= Username, <<X>> == ?COLON orelse <<X>> == ?AT],
+    match(Delimetr, Username).
+
+match([?COLON |_], Username) ->
+    match_colon(Username);
+match([?AT |_], Username) ->
+    match_at(Username);
+match([], _) ->
+    undefined.
+
+match_colon(Username) ->
+    [VHost, _LocalUsername] = binary:split(Username, ?COLON),
+    VHost.
+
+match_at(Username) ->
+    [_LocalUsername, VHost] = binary:split(Username, ?AT),
+    VHost.
 
 %% @doc Handle incoming data for session. Call this after a successful connect. The session will disconnect on an illegal packet.
 -spec incoming_data( session_ref(), binary() ) -> ok | {error, wrong_connection | mqtt_packet_map:decode_error()}. 

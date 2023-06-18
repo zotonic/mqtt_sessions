@@ -26,7 +26,8 @@ all() ->
     [
         connect_disconnect_v5_test,
         connect_reconnect_v5_test,
-        connect_reconnect_clean_v5_test
+        connect_reconnect_clean_v5_test,
+        connect_username_test_v5
     ].
 
 %%--------------------------------------------------------------------
@@ -322,5 +323,62 @@ connect_reconnect_clean_v5_test(_Config) ->
             ct:fail(still_subscribed)
     after 20 ->
         ok
+    end,
+    ok.
+
+connect_username_test_v5(_Config) ->
+    Connect = #{
+        type => connect,
+        protocol_name => <<"MQTT">>,
+        protocol_version => 5,
+        clean_start => true,
+        client_id => <<"test1">>,
+        will_flag => false,
+        username => <<"hostname:user@domain.com">>,
+        password => <<"123">>,
+        properties => #{
+        }
+    },
+    {ok, ConnectMsg} = mqtt_packet_map:encode(5, Connect),
+    Options = #{
+        transport => self()
+    },
+    {ok, {SessionPid, <<>>}} = mqtt_sessions:incoming_connect(ConnectMsg, Options),
+    true = is_pid(SessionPid),
+    receive
+        {mqtt_transport, SessionPid, MsgBin} when is_binary(MsgBin) ->
+            {ok, {ConnAck, <<>>}} = mqtt_packet_map:decode(MsgBin),
+            #{
+                type := connack,
+                session_present := false,
+                reason_code := 0
+            } = ConnAck,
+            ok
+    end,
+    Disconnect = #{
+        type => disconnect,
+        reason_code => 0,
+        properties => #{
+            session_expiry_interval => 0
+        }
+    },
+    {ok, DisconnectMsg} = mqtt_packet_map:encode(5, Disconnect),
+    ok = mqtt_sessions:incoming_data(SessionPid, DisconnectMsg),
+    %
+    % The connection should be signaled to disconnect
+    %
+    receive
+        {mqtt_transport, SessionPid, disconnect} ->
+            ok
+    end,
+    %
+    % And the session process should stop
+    %
+    SessionMRef = erlang:monitor(process, SessionPid),
+    receive
+        {'DOWN', SessionMRef, process, SessionPid, _Reason} ->
+            ok
+        after 1000 ->
+            ct:abort_current_testcase(waiting_for_down)
     end,
     ok.

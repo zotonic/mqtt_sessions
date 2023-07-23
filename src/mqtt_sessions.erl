@@ -203,9 +203,10 @@ publish(Pool, #{ type := publish, topic := Topic } = Msg, UserContext) when is_a
     case mqtt_packet_map_topic:validate_topic_publish(Topic) of
         {ok, TopicValidated} ->
             Runtime = runtime(),
-            case Runtime:is_allowed(publish, TopicValidated, Msg, UserContext) of
+            MsgValidatedTopic = Msg#{ topic => TopicValidated },
+            case Runtime:is_allowed(publish, TopicValidated, MsgValidatedTopic, UserContext) of
                 true ->
-                    case mqtt_sessions_router:publish(Pool, TopicValidated, Msg, UserContext) of
+                    case mqtt_sessions_router:publish(Pool, TopicValidated, MsgValidatedTopic, UserContext) of
                         {ok, _Pid} -> ok;
                         {error, _} = Error -> Error
                     end;

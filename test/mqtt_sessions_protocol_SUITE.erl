@@ -5,6 +5,12 @@
 -include_lib("common_test/include/ct.hrl").
 -include_lib("mqtt_sessions/include/mqtt_sessions.hrl").
 
+%% Supress dialyzer warings on using the ct module.
+-dialyzer({nowarn_function, connect_disconnect_v5_test/1}).
+-dialyzer({nowarn_function, connect_reconnect_v5_test/1}).
+-dialyzer({nowarn_function, connect_reconnect_clean_v5_test/1}).
+
+
 %%--------------------------------------------------------------------
 %% COMMON TEST CALLBACK FUNCTIONS
 %%--------------------------------------------------------------------

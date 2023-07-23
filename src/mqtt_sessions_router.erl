@@ -45,7 +45,7 @@
         pool => atom(),
         topic => list( binary() ),
         topic_bindings => list( proplists:property() ),
-        message => mqtt_packet_map:mqtt_message(),
+        message => mqtt_packet_map:mqtt_packet(),
         publisher_context => term(),
         subscriber_context => term(),
         no_local => boolean(),
@@ -64,9 +64,11 @@
 
 -type subscriber() :: {pid() | mfa(), OwnerPid::pid(), subscriber_options()}.
 
+
 -export_type([
     subscriber/0,
-    mqtt_msg/0
+    mqtt_msg/0,
+    subscriber_options/0
 ]).
 
 -record(state, {
@@ -79,11 +81,11 @@
 -include_lib("../include/mqtt_sessions.hrl").
 
 
--spec publish( atom(), list(), mqtt_packet_map:mqtt_message() ) -> {ok, pid() | undefined} | {error, overload}.
+-spec publish( atom(), list(), mqtt_packet_map:mqtt_packet() ) -> {ok, pid() | undefined} | {error, overload}.
 publish( Pool, Topic, Msg ) ->
     publish(Pool, Topic, Msg, undefined).
 
--spec publish( atom(), list(), mqtt_packet_map:mqtt_message(), term() ) -> {ok, pid() | undefined} | {error, overload}.
+-spec publish( atom(), list(), mqtt_packet_map:mqtt_packet(), term() ) -> {ok, pid() | undefined} | {error, overload}.
 publish( Pool, Topic0, Msg, PublisherContext ) ->
     Topic = publish_topic(Topic0),
     Routes = router:route(Pool, Topic),

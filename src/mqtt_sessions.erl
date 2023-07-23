@@ -144,11 +144,11 @@ session_count(Pool) ->
 router_info(Pool) ->
     mqtt_sessions_router:info(Pool).
 
--spec fetch_queue( session_ref() ) -> {ok, list( mqtt_packet_map:mqtt_message() | binary() )} | {error, notfound}.
+-spec fetch_queue( session_ref() ) -> {ok, list( mqtt_packet_map:mqtt_packet() | binary() )} | {error, notfound}.
 fetch_queue(ClientId) ->
     fetch_queue(?MQTT_SESSIONS_DEFAULT, ClientId).
 
--spec fetch_queue( atom(), session_ref() ) -> {ok, list( mqtt_packet_map:mqtt_message() | binary() )} | {error, notfound}.
+-spec fetch_queue( atom(), session_ref() ) -> {ok, list( mqtt_packet_map:mqtt_packet() | binary() )} | {error, notfound}.
 fetch_queue(Pool, ClientId) ->
     case find_session(Pool, ClientId) of
         {ok, Pid} -> mqtt_sessions_process:fetch_queue(Pid);
@@ -192,13 +192,13 @@ update_user_context(Pool, ClientId, Fun) ->
 get_transport(SessionPid) ->
     mqtt_sessions_process:get_transport(SessionPid).
 
--spec publish( mqtt_packet_map:mqtt_message(), term() ) -> ok | {error, eacces | invalid_topic}.
+-spec publish( mqtt_packet_map:mqtt_packet(), term() ) -> ok | {error, eacces | invalid_topic}.
 publish(#{ type := publish } = Msg, UserContext) ->
     publish(?MQTT_SESSIONS_DEFAULT, Msg, UserContext).
 
 -spec publish
         ( topic(), term(), term() ) -> ok | {error, eacces | invalid_topic};
-        ( atom(), mqtt_packet_map:mqtt_message(), term() ) -> ok | {error, eacces | invalid_topic}.
+        ( atom(), mqtt_packet_map:mqtt_packet(), term() ) -> ok | {error, eacces | invalid_topic}.
 publish(Pool, #{ type := publish, topic := Topic } = Msg, UserContext) when is_atom(Pool) ->
     case mqtt_packet_map_topic:validate_topic_publish(Topic) of
         {ok, TopicValidated} ->
@@ -307,13 +307,13 @@ temp_response_topic(Pool, UserContext) ->
             end
     end.
 
--spec await_response( topic() ) -> {ok, mqtt_packet_map:mqtt_message()} | {error, timeout}.
+-spec await_response( topic() ) -> {ok, mqtt_packet_map:mqtt_packet()} | {error, timeout}.
 await_response( Topic ) ->
     await_response(?MQTT_SESSIONS_DEFAULT, Topic).
 
 -spec await_response
-    ( topic(), pos_integer() ) -> {ok, mqtt_packet_map:mqtt_message()} | {error, timeout};
-    ( atom(), topic() ) -> {ok, mqtt_packet_map:mqtt_message()} | {error, timeout}.
+    ( topic(), pos_integer() ) -> {ok, mqtt_packet_map:mqtt_packet()} | {error, timeout};
+    ( atom(), topic() ) -> {ok, mqtt_packet_map:mqtt_packet()} | {error, timeout}.
 
 await_response( Topic, Timeout ) when is_list(Topic), is_integer(Timeout) ->
     await_response(?MQTT_SESSIONS_DEFAULT, Topic, Timeout);

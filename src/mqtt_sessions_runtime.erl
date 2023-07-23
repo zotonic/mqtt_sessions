@@ -76,7 +76,7 @@ new_user_context( Pool, ClientId, Options ) ->
 control_message(_Topic, _Packet, UserContext) ->
     {ok, UserContext}.
 
--spec connect( mqtt_packet_map:mqtt_packet(), boolean(), mqtt_session:msg_options(), user_context()) -> {ok, mqtt_packet_map:mqtt_packet(), user_context()} | {error, term()}.
+-spec connect( mqtt_packet_map:mqtt_packet(), boolean(), mqtt_sessions:msg_options(), user_context()) -> {ok, mqtt_packet_map:mqtt_packet(), user_context()} | {error, term()}.
 connect(#{ type := connect, username := U, password := P }, IsSessionPresent, Options, UserContext) when ?none(U), ?none(P) ->
     % Anonymous login - user must stay anonymous (regardless of IsSessionPresent)
     case maps:get(user, UserContext, undefined) of

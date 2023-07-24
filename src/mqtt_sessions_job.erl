@@ -31,7 +31,7 @@
 -include_lib("router/include/router.hrl").
 -include_lib("../include/mqtt_sessions.hrl").
 
--spec publish( atom(), mqtt_sessions:topic(), list(), mqtt_packet_map:mqtt_message(), term()) -> {ok, pid() | undefined} | {error, overload}.
+-spec publish( atom(), mqtt_sessions:topic(), list(), mqtt_packet_map:mqtt_packet(), term()) -> {ok, pid() | undefined} | {error, overload}.
 publish(_Pool, _Topic, [], _Msg, _PublisherContext) ->
     {ok, undefined};
 publish(Pool, Topic, Routes, Msg, PublisherContext) ->

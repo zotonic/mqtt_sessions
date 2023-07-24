@@ -53,7 +53,7 @@
 start_link( Pool ) ->
     gen_server:start_link({local, name(Pool)}, ?MODULE, [Pool], []).
 
--spec retain( atom(), mqtt_packet_map:mqtt_message(), term() ) -> ok.
+-spec retain( atom(), mqtt_packet_map:mqtt_packet(), term() ) -> ok.
 retain(Pool, #{ type := publish, topic := Topic } = Msg, PublisherContext) when is_list(Topic) ->
     case is_empty_payload(Msg) of
         true ->
@@ -62,7 +62,7 @@ retain(Pool, #{ type := publish, topic := Topic } = Msg, PublisherContext) when 
             gen_server:call(name(Pool), {retain, Msg, PublisherContext}, infinity)
     end.
 
--spec lookup( atom(), list(binary()) ) -> {ok, [ {mqtt_packet_map:mqtt_message(), term()} ]}.
+-spec lookup( atom(), list(binary()) ) -> {ok, [ {mqtt_packet_map:mqtt_packet(), term()} ]}.
 lookup(Pool, TopicFilter) ->
     case is_wildcard(TopicFilter) of
         true ->

@@ -7,7 +7,9 @@
         kernel, stdlib, crypto,
         sidejob,
         router,
-        mqtt_packet_map
+        zotonic_stdlib,
+        mqtt_packet_map,
+        jsx
     ]},
     {env, [
         {runtime, mqtt_sessions_runtime},

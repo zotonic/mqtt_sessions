@@ -88,11 +88,12 @@ publish( Pool, Topic, Msg ) ->
 -spec publish( atom(), list(), mqtt_packet_map:mqtt_packet(), term() ) -> {ok, pid() | undefined} | {error, overload}.
 publish( Pool, Topic0, Msg, PublisherContext ) ->
     Topic = publish_topic(Topic0),
-    Routes = router:route(Pool, Topic),
-    case mqtt_sessions_job:publish(Pool, Topic, Routes, Msg, PublisherContext) of
+    Pool1 = maybe_map_to_default_pool(Pool, Topic),
+    Routes = router:route(Pool1, Topic),
+    case mqtt_sessions_job:publish(Pool1, Topic, Routes, Msg, PublisherContext) of
         {ok, JobPid} ->
             case maps:get(retain, Msg, false) of
-                true -> mqtt_sessions_retain:retain(Pool, Msg, PublisherContext);
+                true -> mqtt_sessions_retain:retain(Pool1, Msg, PublisherContext);
                 false -> ok
             end,
             {ok, JobPid};

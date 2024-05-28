@@ -981,7 +981,7 @@ queue_1(#{ type := Type } = Msg, #state{ msg_nr = MsgNr, pending = Pending } = S
     State#state{ pending = queue:in(Item, Pending)}.
 
 maybe_purge(#state{ pending = Queue, awaiting_ack = WaitAcks } = State) ->
-    case queue:len(Queue) > ?MAX_INFLIGHT orelse size(WaitAcks) > ?MAX_INFLIGHT_ACK of
+    case queue:len(Queue) > ?MAX_INFLIGHT orelse maps:size(WaitAcks) > ?MAX_INFLIGHT_ACK of
         true ->
             PurgedQueue = purge(Queue),
             PacketIds = queue:fold(
@@ -1017,7 +1017,7 @@ purge(Queue) ->
     case queue:len(Queue1) > ?MAX_INFLIGHT of
         true ->
             % Drop all QoS 0 messages
-            cleanup_pending_qos0(Queue1);
+            queue:filter(fun(#queued{ qos = QoS }) -> QoS > 0 end, Queue1);
         false ->
             Queue1
     end.

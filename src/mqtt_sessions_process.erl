@@ -108,7 +108,7 @@
     packet_id = undefined :: undefined | non_neg_integer(),
     queued :: non_neg_integer(),
     expiry :: non_neg_integer(),
-    qos :: 0..2,
+    qos = 0 :: 0..2,
     message :: mqtt_packet_map:mqtt_packet()
 }).
 
@@ -818,11 +818,7 @@ relay_publish(#{ type := publish, message := Msg } = MqttMsg, State) ->
 % ---------------------------------------------------------------------------------------
 
 cleanup_pending_qos0(#state{ pending = Pending } = State) ->
-    Pending1 = queue:filter(
-                fun(#queued{ qos = QoS }) ->
-                    QoS =:= 0
-                end,
-                Pending),
+    Pending1 = queue:filter(fun(#queued{ qos = QoS }) -> QoS > 0 end, Pending),
     State#state{ pending = Pending1 }.
 
 resend_unacknowledged(#state{ awaiting_ack = AwaitAck } = State) ->
@@ -988,10 +984,13 @@ maybe_purge(#state{ pending = Queue, awaiting_ack = WaitAcks } = State) ->
     case queue:len(Queue) > ?MAX_INFLIGHT orelse size(WaitAcks) > ?MAX_INFLIGHT_ACK of
         true ->
             PurgedQueue = purge(Queue),
-            AcksInPurgedQueue = queue:all(
-                fun(#queued{ qos = N }) -> N > 0 end,
+            PacketIds = queue:fold(
+                fun
+                    (#queued{ qos = 0 }, Acc) -> Acc;
+                    (#queued{ packet_id = PacketId }, Acc) -> [ PacketId | Acc ]
+                end,
+                [],
                 PurgedQueue),
-            PacketIds = [ PacketId || #queued{ packet_id = PacketId } <- AcksInPurgedQueue ],
             State#state{
                 pending = PurgedQueue,
                 awaiting_ack = maps:with(PacketIds, WaitAcks)

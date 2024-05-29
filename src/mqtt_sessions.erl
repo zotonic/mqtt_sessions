@@ -76,7 +76,7 @@
 
 -type session_ref() :: pid() | binary().
 -type msg_options() :: #{
-        transport => pid() | function(),
+        transport => transport(),
         peer_ip => tuple() | undefined,
         context_prefs => map(),
         connection_pid => pid()
@@ -94,6 +94,8 @@
 
 -type callback() :: pid() | {module(), atom(), list()}.
 
+-type transport() :: function() | callback().
+
 -export_type([
     session_ref/0,
     msg_options/0,
@@ -102,7 +104,8 @@
     subscriber/0,
     subscriber_options/0,
     topic/0,
-    callback/0
+    callback/0,
+    transport/0
 ]).
 
 -define(SIDEJOBS_PER_SESSION, 20).
@@ -188,7 +191,7 @@ update_user_context(Pool, ClientId, Fun) ->
         {error, _} = Error -> Error
     end.
 
--spec get_transport( pid() ) -> {ok, pid()} | {error, notransport | noproc}.
+-spec get_transport( pid() ) -> {ok, transport()} | {error, notransport | noproc}.
 get_transport(SessionPid) ->
     mqtt_sessions_process:get_transport(SessionPid).
 

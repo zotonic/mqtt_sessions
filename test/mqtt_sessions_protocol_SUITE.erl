@@ -9,7 +9,7 @@
 -dialyzer({nowarn_function, connect_disconnect_v5_test/1}).
 -dialyzer({nowarn_function, connect_reconnect_v5_test/1}).
 -dialyzer({nowarn_function, connect_reconnect_clean_v5_test/1}).
-
+-dialyzer({nowarn_function, connect_reconnect_buffered_v5_test/1}).
 
 %%--------------------------------------------------------------------
 %% COMMON TEST CALLBACK FUNCTIONS

@@ -747,7 +747,8 @@ packet_pubrec(#{ packet_id := PacketId }, #state{ awaiting_ack = WaitAck } = Sta
         {ok, #wait_for{ msg_nr = MsgNr, type = pubrec }} ->
             WaitFor = #wait_for{
                 msg_nr = MsgNr,
-                type = pubcomp
+                type = pubcomp,
+                queued = mqtt_sessions_timestamp:timestamp()
             },
             {WaitAck#{ PacketId => WaitFor }, ?MQTT_RC_SUCCESS};
         {ok, #wait_for{ type = pubcomp }} ->
@@ -1083,8 +1084,6 @@ disconnect_transport(#state{ transport = {M, F, A} } = State) ->
     erlang:apply(M, F, [disconnect | A]),
     State#state{ transport = undefined, is_connected = false }.
 
-reply_to_transport(undefined, State) ->
-    State;
 reply_to_transport(_Msg, #state{ transport = undefined } = State) ->
     State;
 reply_to_transport(Msg, State) ->
@@ -1095,8 +1094,6 @@ reply_to_transport(Msg, State) ->
             force_disconnect(State)
     end.
 
-reply_or_drop(undefined, State) ->
-    State;
 reply_or_drop(_Msg, #state{ is_connected = false } = State) ->
     State;
 reply_or_drop(Msg, State) ->
@@ -1107,8 +1104,6 @@ reply_or_drop(Msg, State) ->
             force_disconnect(State)
     end.
 
-reply_or_queue(undefined, _MsgNr, State) ->
-    State;
 reply_or_queue(Msg, MsgNr, #state{ is_connected = false } = State) ->
     maybe_purge( queue(Msg, MsgNr, State) );
 reply_or_queue(Msg, MsgNr, State) ->
@@ -1172,7 +1167,7 @@ maybe_purge_ack(WaitAcks) ->
         end,
         WaitAcks).
 
-maybe_purge_buffer(Buffer) ->
+maybe_purge_buffer(Buffer) when is_map(Buffer) ->
     case maps:size(Buffer) > ?MAX_BUFFERED of
         true -> purge_buffer(Buffer);
         false -> Buffer
@@ -1213,9 +1208,7 @@ purge_buffer(Buffer) ->
 -spec encode( mqtt_packet_map:mqtt_version(), mqtt_packet_map:mqtt_packet() | list( mqtt_packet_map:mqtt_packet() )) -> binary().
 encode(ProtocolVersion, Msg) when is_map(Msg) ->
     {ok, Bin} = mqtt_packet_map:encode(ProtocolVersion, Msg),
-    Bin;
-encode(ProtocolVersion, Ms) when is_list(Ms) ->
-    iolist_to_binary([ encode(ProtocolVersion, M) || M <- Ms ]).
+    Bin.
 
 
 %% @doc Set the new connection, disconnect existing transport.

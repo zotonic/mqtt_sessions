@@ -990,7 +990,7 @@ resend_buffered_and_unacknowledged(#state{ awaiting_ack = AwaitAck, buffer = Buf
 mark_packet_sent(PacketId, #state{ awaiting_ack = AwaitAck } = State) ->
     WaitFor = maps:get(PacketId, AwaitAck),
     State#state{
-        awaiting_ack = WaitFor#wait_for{ is_sent = true }
+        awaiting_ack = AwaitAck#{ PacketId => WaitFor#wait_for{ is_sent = true } }
     }.
 
 % ---------------------------------------------------------------------------------------

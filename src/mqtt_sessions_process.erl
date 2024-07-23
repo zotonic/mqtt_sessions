@@ -1159,7 +1159,7 @@ maybe_purge_ack(WaitAcks) ->
     Now = mqtt_sessions_timestamp:timestamp(),
     maps:filter(
         fun
-            (_, #wait_for{ is_sent = true, message = Msg, queued = Queued }) ->
+            (_, #wait_for{ is_sent = true, message = Msg, queued = Queued }) when is_map(Msg) ->
                 Props = maps:get(properties, Msg, #{}),
                 Expiry = Queued + maps:get(message_expiry_interval, Props, ?MESSAGE_EXPIRY_DEFAULT),
                 Expiry > Now;

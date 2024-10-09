@@ -25,6 +25,7 @@
     new_user_context/3,
     connect/4,
     control_message/3,
+    ping/1,
     reauth/2,
     is_allowed/4,
     is_valid_message/3
@@ -152,6 +153,12 @@ connect(_Packet, _IsSessionPresent, _Options, UserContext) ->
 reauth(#{ type := auth }, _UserContext) ->
     {error, notsupported}.
 
+%% @doc Called on a pingreq message from the remote. Used this to keep processes or track connection status.
+-spec ping(UserContext) -> {ok, UserContext1} when
+    UserContext :: user_context(),
+    UserContext1 :: user_context().
+ping(UserContext) ->
+    {ok, UserContext}.
 
 -spec is_allowed( publish | subscribe, topic(), mqtt_packet_map:mqtt_packet(), user_context()) -> boolean().
 is_allowed(publish, _Topic, _Packet, _UserContext) ->

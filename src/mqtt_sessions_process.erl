@@ -416,8 +416,10 @@ handle_incoming(#{ type := subscribe } = Msg, _Options, State) ->
 handle_incoming(#{ type := unsubscribe } = Msg, _Options, State) ->
     packet_unsubscribe(Msg, State);
 
-handle_incoming(#{ type := pingreq }, _Options, State) ->
-    State1 = reply_or_drop(#{ type => pingresp }, State),
+handle_incoming(#{ type := pingreq } = Msg, _Options, State) ->
+    #state{ runtime = Runtime, user_context = UserContext } = State,
+    {ok, UserContext1} = Runtime:ping(UserContext),
+    State1 = reply_or_drop(#{ type => pingresp }, State#state{ user_context = UserContext1 }),
     {ok, State1};
 handle_incoming(#{ type := pingresp }, _Options, State) ->
     {ok, State};

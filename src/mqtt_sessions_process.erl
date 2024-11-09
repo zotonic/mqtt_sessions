@@ -416,7 +416,7 @@ handle_incoming(#{ type := subscribe } = Msg, _Options, State) ->
 handle_incoming(#{ type := unsubscribe } = Msg, _Options, State) ->
     packet_unsubscribe(Msg, State);
 
-handle_incoming(#{ type := pingreq } = Msg, _Options, State) ->
+handle_incoming(#{ type := pingreq }, _Options, State) ->
     #state{ runtime = Runtime, user_context = UserContext } = State,
     {ok, UserContext1} = Runtime:ping(UserContext),
     State1 = reply_or_drop(#{ type => pingresp }, State#state{ user_context = UserContext1 }),
@@ -1024,8 +1024,7 @@ reply_connack(#{ type := connack, reason_code := ?MQTT_RC_SUCCESS } = ConnAck, S
             server_keep_alive => State#state.keep_alive,
             assigned_client_identifier => State#state.client_id,
             subscription_identifier_available => false,
-            shared_subscription_available => false,
-            <<"cotonic-routing-id">> => State#state.routing_id
+            shared_subscription_available => false
         }
     },
     reply_to_transport(ConnAck1, State);

@@ -1,11 +1,11 @@
 %% @author Marc Worrell <marc@worrell.nl>
-%% @copyright 2018-2024 Marc Worrell
+%% @copyright 2018-2025 Marc Worrell
 %% @doc Process handling one single MQTT session.
 %% MQTT connections attach and detach from this session. Buffers outgoing
 %% messages if there is not connection attached.
 %% @end
 
-%% Copyright 2018-2024 Marc Worrell
+%% Copyright 2018-2025 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -42,6 +42,7 @@
     update_user_context/2,
 
     get_transport/1,
+    is_connected/1,
     kill/1,
     incoming_connect/3,
     incoming_data/2,
@@ -168,6 +169,15 @@ get_transport(Pid) ->
             {error, noproc}
     end.
 
+-spec is_connected( pid() ) -> boolean().
+is_connected(Pid) ->
+    try
+        gen_server:call(Pid, is_connected, infinity)
+    catch
+        exit:{noproc, _} ->
+            false
+    end.
+
 -spec kill( pid() ) -> ok.
 kill(Pid) when is_pid(Pid) ->
     MRef = monitor(process, Pid),
@@ -237,6 +247,9 @@ handle_call(get_transport, _From, #state{ transport = undefined } = State) ->
 handle_call(get_transport, _From, #state{ transport = Transport } = State) ->
     {reply, {ok, Transport}, State};
 
+handle_call(is_connected, _From, #state{ is_connected = IsConnected } = State) ->
+    {reply, IsConnected, State};
+
 handle_call({incoming_data, NewData, ConnectionPid}, _From, #state{ incoming_data = Data, connection_pid = ConnectionPid } = State) ->
     Data1 = << Data/binary, NewData/binary >>,
     case handle_incoming_data(Data1, State) of
@@ -299,7 +312,7 @@ handle_info({publish_job, JobPid}, #state{ publish_jobs = Jobs } = State) when i
     {noreply, State1};
 
 handle_info({'DOWN', _Mref, process, Pid, _Reason}, #state{ connection_pid = Pid } = State) ->
-    State1 = do_disconnected(State),
+    State1 = cleanup_state_disconnected(State),
     {noreply, State1};
 handle_info({'DOWN', _Mref, process, Pid, _Reason}, #state{ will_pid = Pid } = State) ->
     send_transport(#{
@@ -1002,12 +1015,9 @@ mark_packet_sent(PacketId, #state{ awaiting_ack = AwaitAck } = State) ->
 
 
 %% @doc Called when the connection disconnects or crashes/stops
-do_disconnected(#state{ will_pid = WillPid } = State) ->
-    mqtt_sessions_will:disconnected(WillPid),
-    cleanup_state_disconnected(State).
-
 %% @todo Cleanup pending messages and awaiting states.
-cleanup_state_disconnected(State) ->
+cleanup_state_disconnected(#state{ will_pid = WillPid } = State) ->
+    mqtt_sessions_will:disconnected(WillPid),
     delete_buffered_qos0(State#state{
         connection_pid = undefined,
         transport = undefined,
@@ -1057,7 +1067,7 @@ extract_will(#{ type := connect, will_flag := true, properties := Props } = Msg)
 
 force_disconnect(#state{ connection_pid = undefined, transport = undefined } = State) ->
     State;
-force_disconnect(State) ->
+force_disconnect(#state{ will_pid = WillPid } = State) ->
     State1 = disconnect_transport(State),
     if
         is_pid(State#state.connection_pid) ->

@@ -46,12 +46,17 @@
     user_context :: term(),
     session_expiry_interval :: non_neg_integer(),
     expiry_ref = undefined :: reference() | undefined,
+    interval_timer_ref = undefined,
     timer_ref = undefined,
     is_stopping :: boolean()
 }).
 
 %% The connect handshake must complete in 20 seconds.
 -define(CONNECT_EXPIRY_INTERVAL, 20).
+
+%% Every minute we do a check with the session to see if it is connected.
+%% This is to catch any missed disconnects.
+-define(CONNECTED_CHECK_INTERVAL, 60).
 
 
 -spec start_link( atom(), pid() ) -> {ok, pid()}.
@@ -99,9 +104,11 @@ stop(Pid) ->
 
 init([ Pool, SessionPid ]) ->
     erlang:monitor(process, SessionPid),
+    {ok, Timer} = timer:send_interval(?CONNECTED_CHECK_INTERVAL * 1000, check_session_connected),
     State = #state{
         pool = Pool,
         session_pid = SessionPid,
+        interval_timer_ref = Timer,
         will = #{},
         is_stopping = false,
         session_expiry_interval = 0
@@ -136,8 +143,10 @@ handle_cast(reconnected, State) ->
 
 handle_cast({disconnected, IsWill, ExpiryInterval}, State) ->
     {noreply, do_disconnected(State, IsWill, ExpiryInterval)};
-handle_cast(disconnected, State) ->
+handle_cast(disconnected, #state{ timer_ref = undefined } = State) ->
     {noreply, do_disconnected(State, true, undefined)};
+handle_cast(disconnected, State) ->
+    {noreply, State};
 
 handle_cast({user_context, UserContext}, State) ->
     {noreply, State#state{ user_context = UserContext }};
@@ -158,11 +167,16 @@ handle_info({expired, Ref}, #state{ expiry_ref = Ref } = State) ->
     mqtt_sessions_process:kill(State#state.session_pid),
     do_publish_will(State),
     {stop, shutdown, State};
-handle_info({expired, Ref}, #state{ expiry_ref = Ref } = State) ->
-    do_publish_will(State),
-    {stop, shutdown, State};
 handle_info({expired, _Ref}, State) ->
     % old timer - ignore
+    {noreply, State};
+handle_info(check_session_connected, #state{ session_pid = Pid, timer_ref = undefined } = State) ->
+    State1 = case mqtt_sessions_process:is_connected(Pid) of
+        true -> State;
+        false -> start_will_timer(State)
+    end,
+    {noreply, State1};
+handle_info(check_session_connected, #state{} = State) ->
     {noreply, State}.
 
 code_change(_Vsn, State, _Extra) ->
@@ -192,6 +206,9 @@ do_disconnected(State, DelayInterval) ->
     Ref = erlang:make_ref(),
     Timer = erlang:send_after(DelayInterval * 1000, self(), {expired, Ref}),
     State#state{ timer_ref = Timer, expiry_ref = Ref }.
+
+start_will_timer(State) ->
+    do_disconnected(State, State#state.session_expiry_interval).
 
 stop_timer(#state{ timer_ref = undefined } = State) ->
     State;

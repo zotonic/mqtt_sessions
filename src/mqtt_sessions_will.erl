@@ -173,7 +173,7 @@ handle_info({expired, _Ref}, State) ->
 handle_info(check_session_connected, #state{ session_pid = Pid, timer_ref = undefined } = State) ->
     State1 = case mqtt_sessions_process:is_connected(Pid) of
         true -> State;
-        false -> start_will_timer(State)
+        false -> do_disconnected(State, true, undefined)
     end,
     {noreply, State1};
 handle_info(check_session_connected, #state{} = State) ->
@@ -206,9 +206,6 @@ do_disconnected(State, DelayInterval) ->
     Ref = erlang:make_ref(),
     Timer = erlang:send_after(DelayInterval * 1000, self(), {expired, Ref}),
     State#state{ timer_ref = Timer, expiry_ref = Ref }.
-
-start_will_timer(State) ->
-    do_disconnected(State, State#state.session_expiry_interval).
 
 stop_timer(#state{ timer_ref = undefined } = State) ->
     State;

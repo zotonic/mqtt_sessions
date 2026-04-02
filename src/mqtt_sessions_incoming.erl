@@ -1,7 +1,7 @@
 %% @author Marc Worrell <marc@worrell.nl>
-%% @copyright 2018 Marc Worrell
+%% @copyright 2018-2026 Marc Worrell
 
-%% Copyright 2018 Marc Worrell
+%% Copyright 2018-2026 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -51,7 +51,7 @@ send_connack_error(ReasonCode, #{ protocol_version := PV }, Options) ->
         type => connack,
         reason_code => ReasonCode
     },
-    AckMsgB = mqtt_packet_map:encode(PV, AckMsg),
+    {ok, AckMsgB} = mqtt_packet_map:encode(PV, AckMsg),
     case maps:get(transport, Options, undefined) of
         undefined ->
             ok;

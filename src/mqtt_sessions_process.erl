@@ -1,11 +1,23 @@
 %% @author Marc Worrell <marc@worrell.nl>
-%% @copyright 2018-2025 Marc Worrell
+%% @copyright 2018-2026 Marc Worrell
 %% @doc Process handling one single MQTT session.
 %% MQTT connections attach and detach from this session. Buffers outgoing
-%% messages if there is not connection attached.
+%% messages if there is no connection attached. For every session we also
+%% start a mqtt_sessions_will process which will trigger a session kill if
+%% the session is disconnected too long, or if the session crashes.
+%% If the session is killed then the optional will message is published by
+%% the will process.
+%% If a client is disconnected then messages are buffered. The buffering
+%% behaviour depends on the QoS of the message. QoS 0 messages are only
+%% buffered if the connection was down for a very short period. QoS 1 and 2
+%% messages are buffered for a period of time. This period is either the
+%% message_expiry_interval or the default buffered message expiry.
+%% There is also a maximum number of messages buffered. Past the maximum
+%% the buffer will start shedding messages. This is separate for QoS 0
+%% and QoS 1/2 messages.
 %% @end
 
-%% Copyright 2018-2025 Marc Worrell
+%% Copyright 2018-2026 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -63,11 +75,17 @@
 -define(KEEP_ALIVE_DEFAULT, 30).        % Default keep alive in seconds
 -define(SESSION_EXPIRY, 900).           % Default session expiration (15 minutes)
 -define(SESSION_EXPIRY_MAX, 3600).      % Maximum allowed session expiration (1 hour)
+-define(SESSION_EXPIRY_WEBSOCKET_ANON, 30).
+-define(SESSION_EXPIRY_WEBSOCKET_CRAWLER, 10).
 -define(MESSAGE_EXPIRY_DEFAULT, 3600).
 -define(ACK_EXPIRY, 600).
 
--define(MAX_BUFFERED, 500).             % Max buffered QoS 0 messages
+-define(MAX_BUFFERED_QOS_0, 100).       % Max buffered QoS 0 messages
+-define(MAX_BUFFERED_QOS_12, 100).      % Max buffered QoS 1 and 2 messages
+-define(MAX_BUFFERED, 200).             % Max total buffered messages
+
 -define(MAX_INFLIGHT_ACK, 500).         % Max in-flight QoS 1/2 messages
+-define(BUFFER_FULL_LOG_INTERVAL, 300000).
 
 
 -define(KILL_TIMEOUT, 5000).
@@ -119,6 +137,15 @@
 
     % Number of times we had a succesful connect to this session
     connect_count = 0 :: non_neg_integer(),
+    dropped_qos12_disconnected = 0 :: non_neg_integer(),
+    last_buffer_full_log = 0 :: non_neg_integer(),
+    max_incoming_packet_size :: pos_integer(),
+    max_outgoing_packet_size = undefined :: undefined | pos_integer(),
+    peer_max_packet_size = undefined :: undefined | pos_integer(),
+    max_incoming_messages_rate = undefined :: undefined | pos_integer(),
+    max_incoming_messages_burst = 0 :: non_neg_integer(),
+    incoming_messages_tokens = 0.0 :: float(),
+    incoming_messages_updated = 0 :: integer(),
 
     % Buffering incoming data for a complete packet
     incoming_data = <<>> :: binary(),
@@ -198,7 +225,7 @@ kill(Pid) when is_pid(Pid) ->
 incoming_connect(Pid, Msg, Options) when is_map(Options) ->
     gen_server:cast(Pid, {incoming_connect, Msg, Options}).
 
--spec incoming_data(pid(), binary()) -> ok | {error, wrong_connection | mqtt_packet_map:decode_error()}. 
+-spec incoming_data(pid(), binary()) -> ok | {error, wrong_connection | packet_too_large | mqtt_packet_map:decode_error()}. 
 incoming_data(Pid, Data) ->
     gen_server:call(Pid, {incoming_data, Data, self()}).
 
@@ -220,6 +247,9 @@ init([ Pool, ClientId, SessionOptions ]) ->
     SessionOptions1 = SessionOptions#{
         routing_id => RoutingId
     },
+    MaxIncomingMessagesRate = mqtt_sessions:max_incoming_messages_rate(),
+    MaxIncomingMessagesBurst = mqtt_sessions:max_incoming_messages_burst(),
+    IncomingMessagesCapacity = incoming_messages_capacity(MaxIncomingMessagesRate, MaxIncomingMessagesBurst),
     KeepAliveRef = erlang:make_ref(),
     erlang:send_after(?KEEP_ALIVE_DEFAULT * 500, self(), {keep_alive, KeepAliveRef}),
     {ok, #state{
@@ -232,7 +262,13 @@ init([ Pool, ClientId, SessionOptions ]) ->
         will_pid = WillPid,
         keep_alive = ?KEEP_ALIVE_DEFAULT,
         keep_alive_counter = 3,
-        keep_alive_ref = KeepAliveRef
+        keep_alive_ref = KeepAliveRef,
+        max_incoming_packet_size = mqtt_sessions:max_incoming_packet_size(),
+        max_outgoing_packet_size = mqtt_sessions:max_outgoing_packet_size(),
+        max_incoming_messages_rate = MaxIncomingMessagesRate,
+        max_incoming_messages_burst = MaxIncomingMessagesBurst,
+        incoming_messages_tokens = IncomingMessagesCapacity,
+        incoming_messages_updated = erlang:monotonic_time(millisecond)
     }}.
 
 handle_call(get_user_context, _From, #state{ user_context = UserContext } = State) ->
@@ -351,6 +387,14 @@ terminate(_Reason, _State) ->
 handle_incoming_data(<<>>, State) ->
     {ok, {<<>>, State}};
 handle_incoming_data(Data, State) ->
+    case mqtt_packet_map:check_packet_size(Data, State#state.max_incoming_packet_size) of
+        ok ->
+            handle_incoming_data_1(Data, State);
+        {error, _} = Error ->
+            Error
+    end.
+
+handle_incoming_data_1(Data, State) ->
     case mqtt_packet_map:decode(State#state.protocol_version, Data) of
         {ok, {Msg, Rest}} ->
             case handle_incoming_with_context(Msg, #{}, State) of
@@ -467,7 +511,7 @@ packet_connect(#{ protocol_version := 5, protocol_name := <<"MQTT">>, properties
     % MQTT v5
     ExpiryInterval = case maps:get(session_expiry_interval, Props, none) of
         none -> ?SESSION_EXPIRY;
-        EI -> max(EI, ?SESSION_EXPIRY_MAX)
+        EI -> min(EI, ?SESSION_EXPIRY_MAX)
     end,
     KeepAlive = maps:get(keep_alive, Msg, ?KEEP_ALIVE_DEFAULT),
     StateIfAccept = State#state{
@@ -475,6 +519,7 @@ packet_connect(#{ protocol_version := 5, protocol_name := <<"MQTT">>, properties
         will = extract_will(Msg),
         session_expiry_interval = ExpiryInterval,
         keep_alive = KeepAlive,
+        peer_max_packet_size = maps:get(maximum_packet_size, Props, undefined),
         incoming_data = <<>>
     },
     StateIfAccept1 = set_connection(Options, StateIfAccept),
@@ -531,8 +576,9 @@ handle_connect_auth_1({ok, #{ type := connack, reason_code := ?MQTT_RC_SUCCESS }
     State2 = reply_connack(ConnAck1, State1),
     mqtt_sessions_will:connected(State2#state.will_pid, StateIfAccept#state.will,
                                  State2#state.session_expiry_interval, State2#state.user_context),
-    State3 = resend_buffered_and_unacknowledged(State2),
-    {ok, State3};
+    State3 = maybe_log_disconnected_drops(State2),
+    State4 = resend_buffered_and_unacknowledged(State3),
+    {ok, State4};
 handle_connect_auth_1({ok, #{ type := connack, reason_code := ReasonCode } = ConnAck, _UserContext1}, _Msg, StateIfAccept, _State) ->
     _ = reply_connack(ConnAck, StateIfAccept),
     ?LOG_INFO(#{
@@ -580,103 +626,128 @@ maybe_clean_start(true, #state{ pool = Pool } = State) ->
 %% @doc Handle a publish request from remote to here
 packet_publish(#{ topic := Topic, qos := 0 } = Msg,
         #state{ runtime = Runtime, user_context = UCtx, client_id = ClientId } = State) ->
-    case Topic of
-        [ <<"$client">>, ClientId | Rest ] ->
-            MsgPub = mqtt_sessions_payload:decode(Msg#{ dup => false }),
-            {ok, UCtx1} = Runtime:control_message(Rest, MsgPub, UCtx),
-            {ok, State#state{ user_context = UCtx1 }};
-        _ ->
-            case Runtime:is_allowed(publish, Topic, Msg, UCtx) of
-                true ->
+    case check_incoming_publish_quota(State) of
+        {allow, State1} ->
+            case Topic of
+                [ <<"$client">>, ClientId | Rest ] ->
                     MsgPub = mqtt_sessions_payload:decode(Msg#{ dup => false }),
-                    {ok, JobPid} = mqtt_sessions_router:publish(State#state.pool, Topic, MsgPub, UCtx),
-                    self() ! {publish_job, JobPid},
-                    {ok, State};
-                false ->
-                    {ok, State}
-            end
+                    {ok, UCtx1} = Runtime:control_message(Rest, MsgPub, UCtx),
+                    {ok, State1#state{ user_context = UCtx1 }};
+                _ ->
+                    case Runtime:is_allowed(publish, Topic, Msg, UCtx) of
+                        true ->
+                            MsgPub = mqtt_sessions_payload:decode(Msg#{ dup => false }),
+                            {ok, JobPid} = mqtt_sessions_router:publish(State#state.pool, Topic, MsgPub, UCtx),
+                            self() ! {publish_job, JobPid},
+                            {ok, State1};
+                        false ->
+                            {ok, State1}
+                    end
+            end;
+        {deny, State1} ->
+            {ok, State1}
     end;
 packet_publish(#{ topic := Topic, qos := 1, dup := Dup, packet_id := PacketId } = Msg,
         #state{ runtime = Runtime, user_context = UCtx, awaiting_rel = WaitRel } = State) ->
-    case maps:find(PacketId, WaitRel) of
-        {ok, _} when not Dup ->
-            % There is a qos 2 level message with the same packet id
+    case check_incoming_publish_quota(State) of
+        {deny, State1} ->
             PubAck = #{
                 type => puback,
                 packet_id => PacketId,
-                reason_code => ?MQTT_RC_PACKET_ID_IN_USE
+                reason_code => ?MQTT_RC_QUOTA_EXCEEDED
             },
-            reply_or_drop(PubAck, State);
-        {ok, {pubrel, RC, _}} when Dup ->
-            % There is a qos 2 level message with the same packet id
-            % But the received mesage is a duplicate, just ack.
-            PubAck = #{
-                type => puback,
-                packet_id => PacketId,
-                reason_code => RC
-            },
-            reply_or_drop(PubAck, State);
-        error ->
-            RC = case Runtime:is_allowed(publish, Topic, Msg, UCtx) of
-                true ->
-                    MsgPub = mqtt_sessions_payload:decode(Msg#{ dup => false }),
-                    {ok, JobPid} = mqtt_sessions_router:publish(State#state.pool, Topic, MsgPub, UCtx),
-                    self() ! {publish_job, JobPid},
-                    ?MQTT_RC_SUCCESS;
-                false ->
-                    ?MQTT_RC_NOT_AUTHORIZED
-            end,
-            PubAck = #{
-                type => puback,
-                packet_id => PacketId,
-                reason_code => RC
-            },
-            State1 = reply_or_drop(PubAck, State),
-            {ok, State1}
+            {ok, reply_or_drop(PubAck, State1)};
+        {allow, State1} ->
+            case maps:find(PacketId, WaitRel) of
+                {ok, _} when not Dup ->
+                    % There is a qos 2 level message with the same packet id
+                    PubAck = #{
+                        type => puback,
+                        packet_id => PacketId,
+                        reason_code => ?MQTT_RC_PACKET_ID_IN_USE
+                    },
+                    reply_or_drop(PubAck, State1);
+                {ok, {pubrel, RC, _}} when Dup ->
+                    % There is a qos 2 level message with the same packet id
+                    % But the received mesage is a duplicate, just ack.
+                    PubAck = #{
+                        type => puback,
+                        packet_id => PacketId,
+                        reason_code => RC
+                    },
+                    reply_or_drop(PubAck, State1);
+                error ->
+                    RC = case Runtime:is_allowed(publish, Topic, Msg, UCtx) of
+                        true ->
+                            MsgPub = mqtt_sessions_payload:decode(Msg#{ dup => false }),
+                            {ok, JobPid} = mqtt_sessions_router:publish(State1#state.pool, Topic, MsgPub, UCtx),
+                            self() ! {publish_job, JobPid},
+                            ?MQTT_RC_SUCCESS;
+                        false ->
+                            ?MQTT_RC_NOT_AUTHORIZED
+                    end,
+                    PubAck = #{
+                        type => puback,
+                        packet_id => PacketId,
+                        reason_code => RC
+                    },
+                    State2 = reply_or_drop(PubAck, State1),
+                    {ok, State2}
+            end
     end;
 packet_publish(#{ topic := Topic, qos := 2, dup := Dup, packet_id := PacketId } = Msg,
         #state{ runtime = Runtime, user_context = UCtx, awaiting_rel = WaitRel } = State) ->
-    case maps:find(PacketId, WaitRel) of
-        {ok, _} when not Dup ->
+    case check_incoming_publish_quota(State) of
+        {deny, State1} ->
             PubRec = #{
                 type => pubrec,
                 packet_id => PacketId,
-                reason_code => ?MQTT_RC_PACKET_ID_IN_USE
+                reason_code => ?MQTT_RC_QUOTA_EXCEEDED
             },
-            reply_or_drop(PubRec, State);
-        {ok, {pubrel, RC, _}} when Dup ->
-            PubRec = #{
-                type => pubrec,
-                packet_id => PacketId,
-                reason_code => RC
-            },
-            State1 = reply_or_drop(PubRec, State),
-            {ok, State1};
-        error ->
-            RC = case Runtime:is_allowed(publish, Topic, Msg, UCtx) of
-                true ->
-                    MsgPub = mqtt_sessions_payload:decode(Msg#{ dup => false }),
-                    {ok, JobPid} = mqtt_sessions_router:publish(State#state.pool, Topic, MsgPub, UCtx),
-                    self() ! {publish_job, JobPid},
-                    ?MQTT_RC_SUCCESS;
-                false ->
-                    ?MQTT_RC_NOT_AUTHORIZED
-            end,
-            State1 = if
-                RC < 16#80 ->
-                    State#state{
-                        awaiting_rel = WaitRel#{ PacketId => {pubrel, RC, mqtt_sessions_timestamp:timestamp()} }
-                    };
-                true ->
-                    State
-            end,
-            PubRec = #{
-                type => pubrec,
-                packet_id => PacketId,
-                reason_code => RC
-            },
-            State2 = reply_or_drop(PubRec, State1),
-            {ok, State2}
+            {ok, reply_or_drop(PubRec, State1)};
+        {allow, State1} ->
+            case maps:find(PacketId, WaitRel) of
+                {ok, _} when not Dup ->
+                    PubRec = #{
+                        type => pubrec,
+                        packet_id => PacketId,
+                        reason_code => ?MQTT_RC_PACKET_ID_IN_USE
+                    },
+                    reply_or_drop(PubRec, State1);
+                {ok, {pubrel, RC, _}} when Dup ->
+                    PubRec = #{
+                        type => pubrec,
+                        packet_id => PacketId,
+                        reason_code => RC
+                    },
+                    State2 = reply_or_drop(PubRec, State1),
+                    {ok, State2};
+                error ->
+                    RC = case Runtime:is_allowed(publish, Topic, Msg, UCtx) of
+                        true ->
+                            MsgPub = mqtt_sessions_payload:decode(Msg#{ dup => false }),
+                            {ok, JobPid} = mqtt_sessions_router:publish(State1#state.pool, Topic, MsgPub, UCtx),
+                            self() ! {publish_job, JobPid},
+                            ?MQTT_RC_SUCCESS;
+                        false ->
+                            ?MQTT_RC_NOT_AUTHORIZED
+                    end,
+                    State2 = if
+                        RC < 16#80 ->
+                            State1#state{
+                                awaiting_rel = WaitRel#{ PacketId => {pubrel, RC, mqtt_sessions_timestamp:timestamp()} }
+                            };
+                        true ->
+                            State1
+                    end,
+                    PubRec = #{
+                        type => pubrec,
+                        packet_id => PacketId,
+                        reason_code => RC
+                    },
+                    State3 = reply_or_drop(PubRec, State2),
+                    {ok, State3}
+            end
     end.
 
 %% @doc Handle the pubrel
@@ -906,16 +977,10 @@ relay_publish(#{ type := publish, message := Msg } = MqttMsg, State) ->
         _ ->
             case maps:size(StatePurged#state.awaiting_ack) >= ?MAX_INFLIGHT_ACK of
                 true when State#state.transport =/= undefined ->
-                    ?LOG_INFO(#{
-                        in => mqtt_session,
-                        text => <<"Not accepting QoS 1/2 message, too many inflight or queued acks">>,
-                        result => error,
-                        reason => buffer_full
-                    }),
-                    StatePurged;
+                    maybe_log_connected_buffer_full(StatePurged);
                 true ->
                     % Dormant session, just drop excess messages.
-                    StatePurged;
+                    inc_dropped_qos12_disconnected(StatePurged);
                 false ->
                     State1 = #state{ packet_id = PacketId } = inc_packet_id(StatePurged),
                     State2 = #state{ msg_nr = MsgNr } = inc_msg_nr(State1),
@@ -1017,19 +1082,79 @@ mark_packet_sent(PacketId, #state{ awaiting_ack = AwaitAck } = State) ->
 %% @doc Called when the connection disconnects or crashes/stops
 %% @todo Cleanup pending messages and awaiting states.
 cleanup_state_disconnected(#state{ will_pid = WillPid } = State) ->
-    mqtt_sessions_will:disconnected(WillPid),
+    mqtt_sessions_will:disconnected(WillPid, true, disconnect_expiry_interval(State)),
     delete_buffered_qos0(State#state{
         connection_pid = undefined,
         transport = undefined,
         is_connected = false
     }).
 
+disconnect_expiry_interval(#state{
+        runtime = Runtime,
+        session_expiry_interval = SessionExpiryInterval,
+        user_context = UserContext
+    }) ->
+    case is_websocket_anonymous_session(Runtime, UserContext) of
+        true -> short_disconnect_expiry_interval(Runtime, UserContext);
+        false -> SessionExpiryInterval
+    end.
+
+is_websocket_anonymous_session(Runtime, UserContext) ->
+    Runtime:is_websocket_origin(UserContext) andalso Runtime:is_anonymous_user(UserContext).
+
+short_disconnect_expiry_interval(Runtime, UserContext) ->
+    case Runtime:is_crawler(UserContext) of
+        true -> ?SESSION_EXPIRY_WEBSOCKET_CRAWLER;
+        false -> ?SESSION_EXPIRY_WEBSOCKET_ANON
+    end.
+
+maybe_log_connected_buffer_full(#state{
+        last_buffer_full_log = LastLog,
+        awaiting_ack = AwaitingAck
+    } = State) ->
+    Now = erlang:monotonic_time(millisecond),
+    case Now - LastLog >= ?BUFFER_FULL_LOG_INTERVAL of
+        true ->
+            ?LOG_INFO(#{
+                in => mqtt_session,
+                text => <<"Not accepting QoS 1/2 message, too many inflight or queued acks">>,
+                queued_count => maps:size(AwaitingAck),
+                result => error,
+                reason => buffer_full
+            }),
+            State#state{ last_buffer_full_log = Now };
+        false ->
+            State
+    end.
+
+inc_dropped_qos12_disconnected(#state{ dropped_qos12_disconnected = N } = State) ->
+    State#state{ dropped_qos12_disconnected = N + 1 }.
+
+maybe_log_disconnected_drops(#state{ dropped_qos12_disconnected = 0 } = State) ->
+    State;
+maybe_log_disconnected_drops(#state{
+        dropped_qos12_disconnected = N,
+        pool = Pool,
+        client_id = ClientId,
+        user_context = UserContext
+    } = State) ->
+    ?LOG_INFO(#{
+        in => mqtt_session,
+        text => <<"Dropped QoS 1/2 messages while session was disconnected">>,
+        pool => Pool,
+        client_id => ClientId,
+        dropped_count => N,
+        user_context => UserContext
+    }),
+    State#state{ dropped_qos12_disconnected = 0 }.
+
 
 %% @doc Send a connack to the remote, ping the will-watchdog that we connected
 reply_connack(#{ type := connack, reason_code := ?MQTT_RC_SUCCESS } = ConnAck, State) ->
     AckProps = maps:get(properties, ConnAck, #{}),
+    AckProps1 = AckProps#{ maximum_packet_size => State#state.max_incoming_packet_size },
     ConnAck1 = ConnAck#{
-        properties => AckProps#{
+        properties => AckProps1#{
             session_expiry_interval => State#state.session_expiry_interval,
             server_keep_alive => State#state.keep_alive,
             assigned_client_identifier => State#state.client_id,
@@ -1066,7 +1191,7 @@ extract_will(#{ type := connect, will_flag := true, properties := Props } = Msg)
 
 force_disconnect(#state{ connection_pid = undefined, transport = undefined } = State) ->
     State;
-force_disconnect(#state{ will_pid = WillPid } = State) ->
+force_disconnect(#state{} = State) ->
     State1 = disconnect_transport(State),
     if
         is_pid(State#state.connection_pid) ->
@@ -1129,7 +1254,13 @@ reply_or_queue(Msg, MsgNr, State) ->
 send_transport(_Msg, #state{ transport = undefined }) ->
     ok;
 send_transport(Msg, #state{ protocol_version = PV } = State) when is_map(Msg) ->
-    send_transport(encode(PV, Msg), State);
+    Bin = encode(PV, Msg),
+    case mqtt_packet_map:check_packet_size(Bin, effective_max_outgoing_packet_size(State)) of
+        ok ->
+            send_transport(Bin, State);
+        {error, _} = Error ->
+            Error
+    end;
 send_transport(Msg, #state{ transport = Pid }) when is_pid(Pid) ->
     case erlang:is_process_alive(Pid) of
         true ->
@@ -1142,7 +1273,6 @@ send_transport(Msg, #state{ transport = Fun }) when is_function(Fun) ->
     Fun(Msg);
 send_transport(Msg, #state{ transport = {M, F, A} }) ->
     erlang:apply(M, F, [Msg | A]).
-
 
 %% @doc Queue a message, extract, type, message expiry, and QoS
 queue(#{ type := Type } = Msg, MsgNr, #state{ buffer = Buffer } = State) ->
@@ -1199,6 +1329,54 @@ maybe_purge_buffer(Buffer) ->
 encode(ProtocolVersion, Msg) when is_map(Msg) ->
     {ok, Bin} = mqtt_packet_map:encode(ProtocolVersion, Msg),
     Bin.
+
+effective_max_outgoing_packet_size(#state{
+        max_outgoing_packet_size = undefined,
+        peer_max_packet_size = undefined
+    }) ->
+    undefined;
+effective_max_outgoing_packet_size(#state{
+        max_outgoing_packet_size = MaxOutgoingPacketSize,
+        peer_max_packet_size = undefined
+    }) ->
+    MaxOutgoingPacketSize;
+effective_max_outgoing_packet_size(#state{
+        max_outgoing_packet_size = undefined,
+        peer_max_packet_size = PeerMaxPacketSize
+    }) ->
+    PeerMaxPacketSize;
+effective_max_outgoing_packet_size(#state{
+        max_outgoing_packet_size = MaxOutgoingPacketSize,
+        peer_max_packet_size = PeerMaxPacketSize
+    }) ->
+    erlang:min(MaxOutgoingPacketSize, PeerMaxPacketSize).
+
+incoming_messages_capacity(Rate, Burst) ->
+    1.0 * (Rate + Burst).
+
+check_incoming_publish_quota(#state{
+        max_incoming_messages_rate = Rate,
+        max_incoming_messages_burst = Burst,
+        incoming_messages_tokens = Tokens,
+        incoming_messages_updated = Updated
+    } = State) ->
+    Now = erlang:monotonic_time(millisecond),
+    Capacity = incoming_messages_capacity(Rate, Burst),
+    Refilled = erlang:min(
+        Capacity,
+        Tokens + ((Now - Updated) * Rate / 1000)),
+    case Refilled >= 1.0 of
+        true ->
+            {allow, State#state{
+                incoming_messages_tokens = Refilled - 1.0,
+                incoming_messages_updated = Now
+            }};
+        false ->
+            {deny, State#state{
+                incoming_messages_tokens = Refilled,
+                incoming_messages_updated = Now
+            }}
+    end.
 
 
 %% @doc Set the new connection, disconnect existing transport.

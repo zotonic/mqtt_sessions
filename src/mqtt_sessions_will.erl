@@ -1,8 +1,14 @@
-%% @doc Watchdog process, publishes the will if a session process fails.
 %% @author Marc Worrell <marc@worrell.nl>
-%% @copyright 2018 Marc Worrell
+%% @copyright 2018-2025 Marc Worrell
+%% @doc Watchdog process, publishes the will and kills the session if it
+%% disconnected too long or crashes. The timeout till the session is killed
+%% is either the (default) session expiry from mqtt_sessions_process or the
+%% expiry interval set in the options of the will message.
+%% Periodically the sessions process is polled to see if it is still connected,
+%% this is done to prevent any missed disconnect events from the sessions process.
+%% @end
 
-%% Copyright 2018 Marc Worrell
+%% Copyright 2018-2025 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -54,9 +60,9 @@
 %% The connect handshake must complete in 20 seconds.
 -define(CONNECT_EXPIRY_INTERVAL, 20).
 
-%% Every minute we do a check with the session to see if it is connected.
+%% Every 10 minutes we do a check with the session to see if it is connected.
 %% This is to catch any missed disconnects.
--define(CONNECTED_CHECK_INTERVAL, 60).
+-define(CONNECTED_CHECK_INTERVAL, 600).
 
 
 -spec start_link( atom(), pid() ) -> {ok, pid()}.

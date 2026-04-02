@@ -1,8 +1,8 @@
 %% @doc MQTT sessions runtime ACL interface.
 %% @author Marc Worrell <marc@worrell.nl>
-%% @copyright 2018-2019 Marc Worrell
+%% @copyright 2018-2026 Marc Worrell
 
-%% Copyright 2018-2019 Marc Worrell
+%% Copyright 2018-2026 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -28,7 +28,10 @@
     ping/1,
     reauth/2,
     is_allowed/4,
-    is_valid_message/3
+    is_valid_message/3,
+    is_websocket_origin/1,
+    is_crawler/1,
+    is_anonymous_user/1
     ]).
 
 -type user_context() :: term().
@@ -43,6 +46,9 @@
 -callback is_allowed( publish | subscribe, topic(), mqtt_packet_map:mqtt_packet(), user_context()) -> boolean().
 -callback is_valid_message( mqtt_packet_map:mqtt_packet(), mqtt_sessions:msg_options(), user_context() ) -> boolean().
 -callback control_message( topic(), mqtt_packet_map:mqtt_packet(), user_context() ) -> {ok, user_context()}.
+-callback is_websocket_origin( user_context() ) -> boolean().
+-callback is_crawler( user_context() ) -> boolean().
+-callback is_anonymous_user( user_context() ) -> boolean().
 
 -export_type([
     user_context/0,
@@ -70,6 +76,8 @@ new_user_context( Pool, ClientId, Options ) ->
         client_id => ClientId,
         routing_id => maps:get(routing_id, Options, undefined),
         peer_ip => maps:get(peer_ip, Options, undefined),
+        mqtt_origin => maps:get(origin, maps:get(context_prefs, Options, #{}), undefined),
+        is_crawler => maps:get(is_crawler, maps:get(context_prefs, Options, #{}), false),
         user => undefined
     }.
 
@@ -172,3 +180,14 @@ is_allowed(subscribe, _Topic, _Packet, _UserContext) ->
 is_valid_message(_Msg, _Options, _UserContext) ->
     true.
 
+-spec is_websocket_origin( user_context() ) -> boolean().
+is_websocket_origin(UserContext) ->
+    maps:get(mqtt_origin, UserContext, undefined) =:= websocket.
+
+-spec is_crawler( user_context() ) -> boolean().
+is_crawler(UserContext) ->
+    maps:get(is_crawler, UserContext, false) =:= true.
+
+-spec is_anonymous_user( user_context() ) -> boolean().
+is_anonymous_user(UserContext) ->
+    maps:get(user, UserContext, undefined) =:= undefined.

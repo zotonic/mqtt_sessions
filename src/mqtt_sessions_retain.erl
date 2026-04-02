@@ -1,7 +1,7 @@
 %% @author Marc Worrell <marc@worrell.nl>
-%% @copyright 2018 Marc Worrell
+%% @copyright 2018-2026 Marc Worrell
 
-%% Copyright 2018 Marc Worrell
+%% Copyright 2018-2026 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -38,15 +38,19 @@
 -record(state, {
         pool :: atom(),
         topics :: ets:tab(),
-        messages :: ets:tab()
+        messages :: ets:tab(),
+        eviction :: ets:tab()
     }).
 
 
 % Default expiry interval for retained messages
 -define(MESSAGE_EXPIRY_INTERVAL, 3600).
+-define(DEFAULT_MAX_RETAINED_MEMORY, 500 * 1024 * 1024).
 
 % Remove expired messages every minute
 -define(PERIODIC_CLEANUP, 60000).
+
+-include_lib("kernel/include/logger.hrl").
 
 
 -spec start_link( atom() ) -> {ok, pid()} | {error, term()}.
@@ -67,7 +71,7 @@ lookup(Pool, TopicFilter) ->
     case is_wildcard(TopicFilter) of
         true ->
             Refs = ets:foldl(
-                fun({MsgTopic, _QoS, _Expire, Ref}, Acc) ->
+                fun({MsgTopic, _QoS, _Expire, _Inserted, Ref}, Acc) ->
                     case match(MsgTopic, TopicFilter) of
                         true -> [ Ref | Acc ];
                         false -> Acc
@@ -78,7 +82,7 @@ lookup(Pool, TopicFilter) ->
             {ok, lookup_refs(Pool, Refs)};
         false ->
             case ets:lookup(name_topics(Pool), TopicFilter) of
-                [{_Topic, _QoS, _Expire, Ref}] ->
+                [{_Topic, _QoS, _Expire, _Inserted, Ref}] ->
                     {ok, lookup_refs(Pool, [Ref])};
                 [] ->
                     {ok, []}
@@ -113,27 +117,34 @@ init([ Pool ]) ->
     {ok, #state{
         pool = Pool,
         topics = ets:new(name_topics(Pool), [ set, protected, named_table ]),
-        messages = ets:new(name_messages(Pool), [ set, protected, named_table ])
+        messages = ets:new(name_messages(Pool), [ set, protected, named_table ]),
+        eviction = ets:new(name_eviction(Pool), [ ordered_set, protected, named_table ])
     }}.
 
-handle_call({retain, #{ topic := Topic } = Msg, PublisherContext}, _From, #state{ topics = Topics, messages = Messages } = State) ->
+handle_call({retain, #{ topic := Topic } = Msg, PublisherContext}, _From,
+        #state{ topics = Topics, messages = Messages, eviction = Eviction } = State) ->
     Props = maps:get(properties, Msg, #{}),
     ExpiryInterval = maps:get(message_expiry_interval, Props, ?MESSAGE_EXPIRY_INTERVAL),
     Expire = mqtt_sessions_timestamp:timestamp() + ExpiryInterval,
+    Inserted = erlang:monotonic_time(),
     QoS = maps:get(qos, Msg, 0),
     Ref = case ets:lookup(Topics, Topic) of
-              [] -> erlang:make_ref();
-              [{_, _, _, R}] -> R
+              [] ->
+                  erlang:make_ref();
+              [{_, _, _, OldInserted, R}] ->
+                  ets:delete(Eviction, {OldInserted, R}),
+                  R
           end,
     ets:insert(Messages, {Ref, Msg, PublisherContext}),
-    ets:insert(Topics, {Topic, QoS, Expire, Ref}),
+    ets:insert(Topics, {Topic, QoS, Expire, Inserted, Ref}),
+    ets:insert(Eviction, {{Inserted, Ref}, Topic}),
+    maybe_enforce_memory_limit(State),
     {reply, ok, State};
 
-handle_call({delete, Topic}, _From, #state{ topics = Topics, messages = Messages } = State) ->
+handle_call({delete, Topic}, _From, #state{ topics = Topics, messages = Messages, eviction = Eviction } = State) ->
     case ets:lookup(Topics, Topic) of
-        [{_Topic, _QoS, _Expire, Ref}] ->
-            ets:delete(Topics, Topic),
-            ets:delete(Messages, Ref);
+        [{_Topic, _QoS, _Expire, _Inserted, Ref}] ->
+            delete_retained(Topic, Ref, Topics, Messages, Eviction);
         [] ->
             ok
     end,
@@ -142,15 +153,15 @@ handle_call({delete, Topic}, _From, #state{ topics = Topics, messages = Messages
 handle_call(Cmd, _From, State) ->
     {stop, {unknown_cmd, Cmd}, State}.
 
-handle_cast(cleanup, #state{ topics = Topics, messages = Messages } = State) ->
-    do_cleanup(Topics, Messages),
+handle_cast(cleanup, #state{ topics = Topics, messages = Messages, eviction = Eviction } = State) ->
+    do_cleanup(Topics, Messages, Eviction),
     {noreply, State};
 
 handle_cast(Cmd, State) ->
     {stop, {unknown_cmd, Cmd}, State}.
 
-handle_info(cleanup, #state{ topics = Topics, messages = Messages } = State) ->
-    do_cleanup(Topics, Messages),
+handle_info(cleanup, #state{ topics = Topics, messages = Messages, eviction = Eviction } = State) ->
+    do_cleanup(Topics, Messages, Eviction),
     erlang:send_after(?PERIODIC_CLEANUP, self(), cleanup),
     {noreply, State};
 handle_info(_Info, State) ->
@@ -166,21 +177,15 @@ terminate(_Reason, _State) ->
 % ----------------------------- support functions ---------------------------------------
 % ---------------------------------------------------------------------------------------
 
-% first([ A | _ ]) -> A;
-% first(_) -> undefined.
-
-% second([ _, B | _ ]) -> B;
-% second(_) -> undefined.
-
 is_empty_payload(#{ payload := undefined }) -> true;
 is_empty_payload(#{ payload := <<>> }) -> true;
 is_empty_payload(#{ payload := _}) -> false;
 is_empty_payload(#{}) -> true.
 
-do_cleanup(Topics, Messages) ->
+do_cleanup(Topics, Messages, Eviction) ->
     Now = mqtt_sessions_timestamp:timestamp(),
     TRefs = ets:foldl(
-        fun({T, _QoS, Expire, Ref}, Acc) ->
+        fun({T, _QoS, Expire, _Inserted, Ref}, Acc) ->
             case Expire < Now of
                 true -> [ {T,Ref} | Acc ];
                 false -> Acc
@@ -190,10 +195,68 @@ do_cleanup(Topics, Messages) ->
         Topics),
     lists:foreach(
         fun({Topic, Ref}) ->
-            ets:delete(Topics, Topic),
-            ets:delete(Messages, Ref)
+            delete_retained(Topic, Ref, Topics, Messages, Eviction)
         end,
         TRefs).
+
+maybe_enforce_memory_limit(#state{ pool = Pool, topics = Topics, messages = Messages, eviction = Eviction }) ->
+    MaxBytes = max_retained_memory(),
+    do_cleanup(Topics, Messages, Eviction),
+    Evicted = evict_until_within_limit(Topics, Messages, Eviction, MaxBytes),
+    case Evicted > 0 of
+        true ->
+            ?LOG_INFO(#{
+                in => mqtt_sessions,
+                text => <<"Evicted retained MQTT messages due to memory limit">>,
+                pool => Pool,
+                evicted_count => Evicted,
+                max_retained_memory => MaxBytes,
+                retained_memory => retained_memory_bytes(Topics, Messages, Eviction)
+            });
+        false ->
+            ok
+    end.
+
+evict_until_within_limit(Topics, Messages, Eviction, MaxBytes) ->
+    case retained_memory_bytes(Topics, Messages, Eviction) =< MaxBytes of
+        true ->
+            0;
+        false ->
+            evict_entries(ets:first(Eviction), Topics, Messages, Eviction, MaxBytes, 0)
+    end.
+
+evict_entries('$end_of_table', _Topics, _Messages, _Eviction, _MaxBytes, Evicted) ->
+    Evicted;
+evict_entries(Key, Topics, Messages, Eviction, MaxBytes, Evicted) ->
+    case retained_memory_bytes(Topics, Messages, Eviction) =< MaxBytes of
+        true ->
+            Evicted;
+        false ->
+            [{{_Inserted, Ref}, Topic}] = ets:lookup(Eviction, Key),
+            NextKey = ets:next(Eviction, Key),
+            delete_retained(Topic, Ref, Topics, Messages, Eviction),
+            evict_entries(NextKey, Topics, Messages, Eviction, MaxBytes, Evicted + 1)
+    end.
+
+retained_memory_bytes(Topics, Messages, Eviction) ->
+    WordSize = erlang:system_info(wordsize),
+    (ets:info(Topics, memory) + ets:info(Messages, memory) + ets:info(Eviction, memory)) * WordSize.
+
+delete_retained(Topic, Ref, Topics, Messages, Eviction) ->
+    case ets:lookup(Topics, Topic) of
+        [{_Topic, _QoS, _Expire, Inserted, Ref}] ->
+            ets:delete(Topics, Topic),
+            ets:delete(Messages, Ref),
+            ets:delete(Eviction, {Inserted, Ref});
+        _ ->
+            ok
+    end.
+
+max_retained_memory() ->
+    case application:get_env(mqtt_sessions, max_retained_memory) of
+        {ok, N} when is_integer(N), N > 0 -> N;
+        _ -> ?DEFAULT_MAX_RETAINED_MEMORY
+    end.
 
 
 match([], []) -> true;
@@ -218,3 +281,7 @@ name_topics( Pool ) ->
 -spec name_messages( atom() ) -> atom().
 name_messages( Pool ) ->
     list_to_atom(atom_to_list(Pool) ++ "$retainms").
+
+-spec name_eviction( atom() ) -> atom().
+name_eviction( Pool ) ->
+    list_to_atom(atom_to_list(Pool) ++ "$retainev").

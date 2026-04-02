@@ -28,7 +28,8 @@ all() ->
         subscribe_mfa_test,
         subscribe_self_wildcard_test,
         subscribe_self_wildcard2_test,
-        subscribe_temp_test
+        subscribe_temp_test,
+        retained_memory_limit_test
     ].
 
 %%--------------------------------------------------------------------
@@ -146,3 +147,61 @@ subscribe_temp_test(_Config) ->
             } = MqttMsg,
             ok
     end.
+
+retained_memory_limit_test(_Config) ->
+    Pool = ?MQTT_SESSIONS_DEFAULT,
+    Topic1 = [ <<"retained-memory-limit-1">> ],
+    Topic2 = [ <<"retained-memory-limit-2">> ],
+    Payload1 = binary:copy(<<"a">>, 65536),
+    Payload2 = binary:copy(<<"b">>, 65536),
+    Msg1 = #{
+        type => publish,
+        topic => Topic1,
+        payload => Payload1,
+        retain => true
+    },
+    Msg2 = #{
+        type => publish,
+        topic => Topic2,
+        payload => Payload2,
+        retain => true
+    },
+    ok = mqtt_sessions_retain:retain(Pool, Msg2, ctx2),
+    MemoryOne = retained_memory_bytes(Pool),
+    ok = mqtt_sessions_retain:retain(Pool, Msg2#{ payload => <<>> }, ctx2),
+    ok = mqtt_sessions_retain:retain(Pool, Msg1, ctx1),
+    ok = mqtt_sessions_retain:retain(Pool, Msg2, ctx2),
+    MemoryTwo = retained_memory_bytes(Pool),
+    ok = mqtt_sessions_retain:retain(Pool, Msg1#{ payload => <<>> }, ctx1),
+    ok = mqtt_sessions_retain:retain(Pool, Msg2#{ payload => <<>> }, ctx2),
+    MemoryLimit = (MemoryOne + MemoryTwo) div 2,
+    with_max_retained_memory(
+        MemoryLimit,
+        fun() ->
+            ok = mqtt_sessions_retain:retain(Pool, Msg1, ctx1),
+            ok = mqtt_sessions_retain:retain(Pool, Msg2, ctx2),
+            {ok, []} = mqtt_sessions_retain:lookup(Pool, Topic1),
+            true = retained_memory_bytes(Pool) =< MemoryLimit
+        end),
+    ok = mqtt_sessions_retain:retain(Pool, Msg1#{ payload => <<>> }, ctx1),
+    ok = mqtt_sessions_retain:retain(Pool, Msg2#{ payload => <<>> }, ctx2).
+
+with_max_retained_memory(MaxRetainedMemory, Fun) ->
+    OldValue = application:get_env(mqtt_sessions, max_retained_memory),
+    application:set_env(mqtt_sessions, max_retained_memory, MaxRetainedMemory),
+    try
+        Fun()
+    after
+        case OldValue of
+            {ok, Value} ->
+                application:set_env(mqtt_sessions, max_retained_memory, Value);
+            undefined ->
+                application:unset_env(mqtt_sessions, max_retained_memory)
+        end
+    end.
+
+retained_memory_bytes(Pool) ->
+    WordSize = erlang:system_info(wordsize),
+    Topics = list_to_atom(atom_to_list(Pool) ++ "$retaintp"),
+    Messages = list_to_atom(atom_to_list(Pool) ++ "$retainms"),
+    (ets:info(Topics, memory) + ets:info(Messages, memory)) * WordSize.

@@ -153,10 +153,12 @@ using:
 - `max_incoming_messages_burst`
 
 `max_incoming_messages_rate` is the sustained number of incoming publish
-messages per second.
+messages per second. The period for this limit is `1` second.
 
 `max_incoming_messages_burst` is the extra burst capacity on top of the regular
-rate.
+rate. This is not a separate time window; it is additional token-bucket
+capacity that can be spent immediately and then refills at the regular per-
+second rate.
 
 The limiter uses a token-bucket model per session. This means a client can send
 messages at the configured steady rate, while also consuming a limited burst

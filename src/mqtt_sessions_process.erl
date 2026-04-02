@@ -80,6 +80,7 @@
 
 -define(MAX_BUFFERED_QOS_0, 100).       % Max buffered QoS 0 messages
 -define(MAX_BUFFERED_QOS_12, 100).      % Max buffered QoS 1 and 2 messages
+-define(MAX_BUFFERED, 200).             % Max total buffered messages
 
 -define(MAX_INFLIGHT_ACK, 500).         % Max in-flight QoS 1/2 messages
 

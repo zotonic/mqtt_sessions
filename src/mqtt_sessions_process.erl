@@ -2,7 +2,19 @@
 %% @copyright 2018-2025 Marc Worrell
 %% @doc Process handling one single MQTT session.
 %% MQTT connections attach and detach from this session. Buffers outgoing
-%% messages if there is not connection attached.
+%% messages if there is no connection attached. For every session we also
+%% start a mqtt_sessions_will process which will trigger a session kill if
+%% the session is disconnected too long, or if the session crashes.
+%% If the session is killed then the optional will message is published by
+%% the will process.
+%% If a client is disconnected then messages are buffered. The buffering
+%% behaviour depends on the QoS of the message. QoS 0 messages are only
+%% buffered if the connection was down for a very short period. QoS 1 and 2
+%% messages are buffered for a period of time. This period is either the
+%% message_expiry_interval or the default buffered message expiry.
+%% There is also a maximum number of messages buffered. Past the maximum
+%% the buffer will start shedding messages. This is separate for QoS 0
+%% and QoS 1/2 messages.
 %% @end
 
 %% Copyright 2018-2025 Marc Worrell
@@ -66,7 +78,9 @@
 -define(MESSAGE_EXPIRY_DEFAULT, 3600).
 -define(ACK_EXPIRY, 600).
 
--define(MAX_BUFFERED, 500).             % Max buffered QoS 0 messages
+-define(MAX_BUFFERED_QOS_0, 100).       % Max buffered QoS 0 messages
+-define(MAX_BUFFERED_QOS_12, 100).      % Max buffered QoS 1 and 2 messages
+
 -define(MAX_INFLIGHT_ACK, 500).         % Max in-flight QoS 1/2 messages
 
 
@@ -1066,7 +1080,7 @@ extract_will(#{ type := connect, will_flag := true, properties := Props } = Msg)
 
 force_disconnect(#state{ connection_pid = undefined, transport = undefined } = State) ->
     State;
-force_disconnect(#state{ will_pid = WillPid } = State) ->
+force_disconnect(#state{} = State) ->
     State1 = disconnect_transport(State),
     if
         is_pid(State#state.connection_pid) ->

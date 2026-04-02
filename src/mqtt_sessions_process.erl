@@ -387,7 +387,7 @@ terminate(_Reason, _State) ->
 handle_incoming_data(<<>>, State) ->
     {ok, {<<>>, State}};
 handle_incoming_data(Data, State) ->
-    case check_packet_size(Data, State#state.max_incoming_packet_size) of
+    case mqtt_sessions_packet:check_packet_size(Data, State#state.max_incoming_packet_size) of
         ok ->
             handle_incoming_data_1(Data, State);
         {error, _} = Error ->
@@ -1255,7 +1255,7 @@ send_transport(_Msg, #state{ transport = undefined }) ->
     ok;
 send_transport(Msg, #state{ protocol_version = PV } = State) when is_map(Msg) ->
     Bin = encode(PV, Msg),
-    case check_packet_size(Bin, effective_max_outgoing_packet_size(State)) of
+    case mqtt_sessions_packet:check_packet_size(Bin, effective_max_outgoing_packet_size(State)) of
         ok ->
             send_transport(Bin, State);
         {error, _} = Error ->
@@ -1273,49 +1273,6 @@ send_transport(Msg, #state{ transport = Fun }) when is_function(Fun) ->
     Fun(Msg);
 send_transport(Msg, #state{ transport = {M, F, A} }) ->
     erlang:apply(M, F, [Msg | A]).
-
-check_packet_size(_Data, undefined) ->
-    ok;
-check_packet_size(Data, MaxPacketSize) ->
-    case packet_size(Data) of
-        {ok, PacketSize} when PacketSize =< MaxPacketSize ->
-            ok;
-        {ok, _PacketSize} ->
-            {error, packet_too_large};
-        {error, _} = Error ->
-            Error;
-        incomplete ->
-            ok
-    end.
-
-packet_size(<<_PacketType:8, Rest/binary>>) ->
-    case remaining_length(Rest, 0, 1, 0) of
-        {ok, RemainingLength, LengthBytes} ->
-            {ok, 1 + LengthBytes + RemainingLength};
-        {error, _} = Error ->
-            Error;
-        incomplete ->
-            incomplete
-    end;
-packet_size(<<>>) ->
-    incomplete.
-
-remaining_length(<<>>, _Value, _Multiplier, _Count) ->
-    incomplete;
-remaining_length(_Rest, _Value, _Multiplier, Count) when Count >= 4 ->
-    % MQTT spec: Remaining Length MUST be encoded in at most 4 bytes
-    {error, malformed_packet};
-remaining_length(<<Byte:8, Rest/binary>>, Value, Multiplier, Count) ->
-    Value1 = Value + ((Byte band 16#7f) * Multiplier),
-    case Byte band 16#80 of
-        16#80 ->
-            remaining_length(Rest, Value1, Multiplier * 128, Count + 1);
-        0 when Value1 > 268435455 ->
-            % MQTT spec: Remaining Length MUST NOT exceed 268435455 (0x0FFFFFFF)
-            {error, malformed_packet};
-        0 ->
-            {ok, Value1, Count + 1}
-    end.
 
 %% @doc Queue a message, extract, type, message expiry, and QoS
 queue(#{ type := Type } = Msg, MsgNr, #state{ buffer = Buffer } = State) ->

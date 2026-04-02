@@ -403,7 +403,7 @@ incoming_connect(MsgBin, Options) ->
 %% @doc Stream the connect message - connect a MQTT session or return an error
 -spec incoming_connect( atom(), binary(), msg_options() ) -> {ok, {session_ref(), binary()}} | {error, incomplete_packet} | {error, term()}.
 incoming_connect(Pool, MsgBin, Options) ->
-    case check_packet_size(MsgBin, max_incoming_packet_size()) of
+    case mqtt_sessions_packet:check_packet_size(MsgBin, max_incoming_packet_size()) of
         ok ->
             case mqtt_packet_map:decode(MsgBin) of
                 {ok, {#{ type := connect } = Packet, Rest}} ->
@@ -503,49 +503,6 @@ sidejobs_per_session() ->
     case application:get_env(mqtt_sessions, sidejobs_per_session) of
         {ok, N} -> N;
         undefined -> ?SIDEJOBS_PER_SESSION
-    end.
-
-check_packet_size(_Data, undefined) ->
-    ok;
-check_packet_size(Data, MaxPacketSize) ->
-    case packet_size(Data) of
-        {ok, PacketSize} when PacketSize =< MaxPacketSize ->
-            ok;
-        {ok, _PacketSize} ->
-            {error, packet_too_large};
-        {error, _} = Error ->
-            Error;
-        incomplete ->
-            ok
-    end.
-
-packet_size(<<_PacketType:8, Rest/binary>>) ->
-    case remaining_length(Rest, 0, 1, 0) of
-        {ok, RemainingLength, LengthBytes} ->
-            {ok, 1 + LengthBytes + RemainingLength};
-        {error, _} = Error ->
-            Error;
-        incomplete ->
-            incomplete
-    end;
-packet_size(<<>>) ->
-    incomplete.
-
-remaining_length(<<>>, _Value, _Multiplier, _Count) ->
-    incomplete;
-remaining_length(_Rest, _Value, _Multiplier, Count) when Count >= 4 ->
-    % MQTT spec: Remaining Length MUST be encoded in at most 4 bytes
-    {error, malformed_packet};
-remaining_length(<<Byte:8, Rest/binary>>, Value, Multiplier, Count) ->
-    Value1 = Value + ((Byte band 16#7f) * Multiplier),
-    case Byte band 16#80 of
-        16#80 ->
-            remaining_length(Rest, Value1, Multiplier * 128, Count + 1);
-        0 when Value1 > 268435455 ->
-            % MQTT spec: Remaining Length MUST NOT exceed 268435455 (0x0FFFFFFF)
-            {error, malformed_packet};
-        0 ->
-            {ok, Value1, Count + 1}
     end.
 
 maybe_send_packet_too_large(MsgBin, Options) ->

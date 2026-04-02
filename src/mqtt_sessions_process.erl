@@ -1258,8 +1258,8 @@ send_transport(Msg, #state{ protocol_version = PV } = State) when is_map(Msg) ->
     case check_packet_size(Bin, effective_max_outgoing_packet_size(State)) of
         ok ->
             send_transport(Bin, State);
-        {error, packet_too_large} ->
-            {error, packet_too_large}
+        {error, _} = Error ->
+            Error
     end;
 send_transport(Msg, #state{ transport = Pid }) when is_pid(Pid) ->
     case erlang:is_process_alive(Pid) of
@@ -1282,6 +1282,8 @@ check_packet_size(Data, MaxPacketSize) ->
             ok;
         {ok, _PacketSize} ->
             {error, packet_too_large};
+        {error, _} = Error ->
+            Error;
         incomplete ->
             ok
     end.
@@ -1290,6 +1292,8 @@ packet_size(<<_PacketType:8, Rest/binary>>) ->
     case remaining_length(Rest, 0, 1, 0) of
         {ok, RemainingLength, LengthBytes} ->
             {ok, 1 + LengthBytes + RemainingLength};
+        {error, _} = Error ->
+            Error;
         incomplete ->
             incomplete
     end;
@@ -1298,11 +1302,17 @@ packet_size(<<>>) ->
 
 remaining_length(<<>>, _Value, _Multiplier, _Count) ->
     incomplete;
+remaining_length(_Rest, _Value, _Multiplier, Count) when Count >= 4 ->
+    % MQTT spec: Remaining Length MUST be encoded in at most 4 bytes
+    {error, malformed_packet};
 remaining_length(<<Byte:8, Rest/binary>>, Value, Multiplier, Count) ->
     Value1 = Value + ((Byte band 16#7f) * Multiplier),
     case Byte band 16#80 of
         16#80 ->
             remaining_length(Rest, Value1, Multiplier * 128, Count + 1);
+        0 when Value1 > 268435455 ->
+            % MQTT spec: Remaining Length MUST NOT exceed 268435455 (0x0FFFFFFF)
+            {error, malformed_packet};
         0 ->
             {ok, Value1, Count + 1}
     end.

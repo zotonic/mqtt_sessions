@@ -387,7 +387,7 @@ terminate(_Reason, _State) ->
 handle_incoming_data(<<>>, State) ->
     {ok, {<<>>, State}};
 handle_incoming_data(Data, State) ->
-    case mqtt_sessions_packet:check_packet_size(Data, State#state.max_incoming_packet_size) of
+    case mqtt_packet_map:check_packet_size(Data, State#state.max_incoming_packet_size) of
         ok ->
             handle_incoming_data_1(Data, State);
         {error, _} = Error ->
@@ -1255,7 +1255,7 @@ send_transport(_Msg, #state{ transport = undefined }) ->
     ok;
 send_transport(Msg, #state{ protocol_version = PV } = State) when is_map(Msg) ->
     Bin = encode(PV, Msg),
-    case mqtt_sessions_packet:check_packet_size(Bin, effective_max_outgoing_packet_size(State)) of
+    case mqtt_packet_map:check_packet_size(Bin, effective_max_outgoing_packet_size(State)) of
         ok ->
             send_transport(Bin, State);
         {error, _} = Error ->

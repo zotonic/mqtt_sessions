@@ -403,7 +403,7 @@ incoming_connect(MsgBin, Options) ->
 %% @doc Stream the connect message - connect a MQTT session or return an error
 -spec incoming_connect( atom(), binary(), msg_options() ) -> {ok, {session_ref(), binary()}} | {error, term()}.
 incoming_connect(Pool, MsgBin, Options) ->
-    case mqtt_sessions_packet:check_packet_size(MsgBin, max_incoming_packet_size()) of
+    case mqtt_packet_map:check_packet_size(MsgBin, max_incoming_packet_size()) of
         ok ->
             case mqtt_packet_map:decode(MsgBin) of
                 {ok, {#{ type := connect } = Packet, Rest}} ->

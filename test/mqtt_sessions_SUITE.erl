@@ -152,28 +152,36 @@ retained_memory_limit_test(_Config) ->
     Pool = ?MQTT_SESSIONS_DEFAULT,
     Topic1 = [ <<"retained-memory-limit-1">> ],
     Topic2 = [ <<"retained-memory-limit-2">> ],
+    Payload1 = binary:copy(<<"a">>, 65536),
+    Payload2 = binary:copy(<<"b">>, 65536),
     Msg1 = #{
         type => publish,
         topic => Topic1,
-        payload => <<"hello-1">>,
+        payload => Payload1,
         retain => true
     },
     Msg2 = #{
         type => publish,
         topic => Topic2,
-        payload => <<"hello-2">>,
+        payload => Payload2,
         retain => true
     },
+    ok = mqtt_sessions_retain:retain(Pool, Msg2, ctx2),
+    MemoryOne = retained_memory_bytes(Pool),
+    ok = mqtt_sessions_retain:retain(Pool, Msg2#{ payload => <<>> }, ctx2),
     ok = mqtt_sessions_retain:retain(Pool, Msg1, ctx1),
-    {ok, [{_, ctx1}]} = mqtt_sessions_retain:lookup(Pool, Topic1),
-    MemoryLimit = retained_memory_bytes(Pool),
+    ok = mqtt_sessions_retain:retain(Pool, Msg2, ctx2),
+    MemoryTwo = retained_memory_bytes(Pool),
+    ok = mqtt_sessions_retain:retain(Pool, Msg1#{ payload => <<>> }, ctx1),
+    ok = mqtt_sessions_retain:retain(Pool, Msg2#{ payload => <<>> }, ctx2),
+    MemoryLimit = (MemoryOne + MemoryTwo) div 2,
     with_max_retained_memory(
         MemoryLimit,
         fun() ->
+            ok = mqtt_sessions_retain:retain(Pool, Msg1, ctx1),
             ok = mqtt_sessions_retain:retain(Pool, Msg2, ctx2),
             {ok, []} = mqtt_sessions_retain:lookup(Pool, Topic1),
-            {ok, [{RetainedMsg2, ctx2}]} = mqtt_sessions_retain:lookup(Pool, Topic2),
-            #{ payload := <<"hello-2">> } = RetainedMsg2
+            true = retained_memory_bytes(Pool) =< MemoryLimit
         end),
     ok = mqtt_sessions_retain:retain(Pool, Msg1#{ payload => <<>> }, ctx1),
     ok = mqtt_sessions_retain:retain(Pool, Msg2#{ payload => <<>> }, ctx2).

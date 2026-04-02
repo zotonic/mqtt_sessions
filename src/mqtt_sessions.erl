@@ -473,7 +473,7 @@ max_outgoing_packet_size() ->
         _ -> undefined
     end.
 
--spec max_incoming_messages_rate() -> pos_integer() | undefined.
+-spec max_incoming_messages_rate() -> pos_integer().
 max_incoming_messages_rate() ->
     case application:get_env(mqtt_sessions, max_incoming_messages_rate) of
         {ok, N} when is_integer(N), N > 0 -> N;

@@ -24,7 +24,10 @@
     packet_size/1
 ]).
 
--spec check_packet_size(binary(), pos_integer() | undefined) -> ok | incomplete | {error, malformed_packet | packet_too_large}.
+-spec check_packet_size(Data, MaxPacketSize) -> ok | incomplete | {error, Reason} when
+    Data :: binary(),
+    MaxPacketSize :: pos_integer() | undefined,
+    Reason :: malformed_packet | packet_too_large.
 check_packet_size(_Data, undefined) ->
     ok;
 check_packet_size(Data, MaxPacketSize) ->
@@ -39,7 +42,10 @@ check_packet_size(Data, MaxPacketSize) ->
             incomplete
     end.
 
--spec packet_size(binary()) -> {ok, non_neg_integer()} | incomplete | {error, malformed_packet}.
+-spec packet_size(Data) -> {ok, PacketSize} | incomplete | {error, Reason} when
+    Data :: binary(),
+    PacketSize :: non_neg_integer(),
+    Reason :: malformed_packet.
 packet_size(<<_PacketType:8, Rest/binary>>) ->
     case remaining_length(Rest, 0, 1, 0) of
         {ok, RemainingLength, LengthBytes} ->
@@ -52,6 +58,14 @@ packet_size(<<_PacketType:8, Rest/binary>>) ->
 packet_size(<<>>) ->
     incomplete.
 
+-spec remaining_length(Rest, Value, Multiplier, Count) -> {ok, RemainingLength, LengthBytes} | incomplete | {error, Reason} when
+    Rest :: binary(),
+    Value :: non_neg_integer(),
+    Multiplier :: pos_integer(),
+    Count :: non_neg_integer(),
+    RemainingLength :: non_neg_integer(),
+    LengthBytes :: pos_integer(),
+    Reason :: malformed_packet.
 remaining_length(<<>>, _Value, _Multiplier, _Count) ->
     incomplete;
 remaining_length(_Rest, _Value, _Multiplier, Count) when Count >= 4 ->

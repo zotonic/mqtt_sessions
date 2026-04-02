@@ -77,7 +77,6 @@
         monitors :: map()
     }).
 
--include_lib("router/include/router.hrl").
 -include_lib("../include/mqtt_sessions.hrl").
 
 

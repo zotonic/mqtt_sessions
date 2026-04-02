@@ -1,9 +1,9 @@
 %% @author Marc Worrell <marc@worrell.nl>
-%% @copyright 2018-2024 Marc Worrell
+%% @copyright 2018-2026 Marc Worrell
 %% @doc Session management for a MQTT server.
 %% @end
 
-%% Copyright 2018-2024 Marc Worrell
+%% Copyright 2018-2026 Marc Worrell
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -69,6 +69,10 @@
 
     incoming_data/2,
 
+    max_incoming_packet_size/0,
+    max_outgoing_packet_size/0,
+    max_incoming_messages_rate/0,
+    max_incoming_messages_burst/0,
     sidejobs_limit/0,
     sidejobs_per_session/0
     ]).
@@ -110,6 +114,9 @@
 
 -define(SIDEJOBS_PER_SESSION, 20).
 -define(DEFAULT_CALL_TIMEOUT, 5000).
+-define(DEFAULT_MAX_INCOMING_PACKET_SIZE, 20 * 1024 * 1024).
+-define(DEFAULT_MAX_INCOMING_MESSAGES_RATE, 1000).
+-define(DEFAULT_MAX_INCOMING_MESSAGES_BURST, 5000).
 
 -include("../include/mqtt_sessions.hrl").
 -include_lib("mqtt_packet_map/include/mqtt_packet_map.hrl").
@@ -396,20 +403,26 @@ incoming_connect(MsgBin, Options) ->
 %% @doc Stream the connect message - connect a MQTT session or return an error
 -spec incoming_connect( atom(), binary(), msg_options() ) -> {ok, {session_ref(), binary()}} | {error, incomplete_packet} | {error, term()}.
 incoming_connect(Pool, MsgBin, Options) ->
-    case mqtt_packet_map:decode(MsgBin) of
-        {ok, {#{ type := connect } = Packet, Rest}} ->
-            case connect_pool(Pool, Packet) of
-                {ok, ConnectPool} ->
-                    {ok, SessionRef} = mqtt_sessions_incoming:incoming_connect(ConnectPool, Packet, Options#{ connection_pid => self() }),
-                    {ok, {SessionRef, Rest}};
+    case check_packet_size(MsgBin, max_incoming_packet_size()) of
+        ok ->
+            case mqtt_packet_map:decode(MsgBin) of
+                {ok, {#{ type := connect } = Packet, Rest}} ->
+                    case connect_pool(Pool, Packet) of
+                        {ok, ConnectPool} ->
+                            {ok, SessionRef} = mqtt_sessions_incoming:incoming_connect(ConnectPool, Packet, Options#{ connection_pid => self() }),
+                            {ok, {SessionRef, Rest}};
+                        {error, _} = Error ->
+                            mqtt_sessions_incoming:send_connack_error(?MQTT_RC_SERVER_UNAVAILABLE, Packet, Options),
+                            Error
+                    end;
+                {ok, {_Msg, _Rest}} ->
+                    {error, expect_connect};
                 {error, _} = Error ->
-                    mqtt_sessions_incoming:send_connack_error(?MQTT_RC_SERVER_UNAVAILABLE, Packet, Options),
                     Error
             end;
-        {ok, {_Msg, _Rest}} ->
-            {error, expect_connect};
-        {error, _} = Error ->
-            Error
+        {error, packet_too_large} ->
+            maybe_send_packet_too_large(MsgBin, Options),
+            {error, packet_too_large}
     end.
 
 connect_pool(Pool, Msg) ->
@@ -446,6 +459,34 @@ username_to_pool(_ConnectMsg) ->
 incoming_data(SessionRef, MsgBin) ->
     mqtt_sessions_process:incoming_data(SessionRef, MsgBin).
 
+-spec max_incoming_packet_size() -> pos_integer().
+max_incoming_packet_size() ->
+    case application:get_env(mqtt_sessions, max_incoming_packet_size) of
+        {ok, N} when is_integer(N), N > 0 -> N;
+        _ -> ?DEFAULT_MAX_INCOMING_PACKET_SIZE
+    end.
+
+-spec max_outgoing_packet_size() -> pos_integer() | undefined.
+max_outgoing_packet_size() ->
+    case application:get_env(mqtt_sessions, max_outgoing_packet_size) of
+        {ok, N} when is_integer(N), N > 0 -> N;
+        _ -> undefined
+    end.
+
+-spec max_incoming_messages_rate() -> pos_integer() | undefined.
+max_incoming_messages_rate() ->
+    case application:get_env(mqtt_sessions, max_incoming_messages_rate) of
+        {ok, N} when is_integer(N), N > 0 -> N;
+        _ -> ?DEFAULT_MAX_INCOMING_MESSAGES_RATE
+    end.
+
+-spec max_incoming_messages_burst() -> non_neg_integer().
+max_incoming_messages_burst() ->
+    case application:get_env(mqtt_sessions, max_incoming_messages_burst) of
+        {ok, N} when is_integer(N), N >= 0 -> N;
+        _ -> ?DEFAULT_MAX_INCOMING_MESSAGES_BURST
+    end.
+
 
 %% @doc Limit the number of sidejobs for message dispatching.
 -spec sidejobs_limit() -> pos_integer().
@@ -462,4 +503,43 @@ sidejobs_per_session() ->
         undefined -> ?SIDEJOBS_PER_SESSION
     end.
 
+check_packet_size(_Data, undefined) ->
+    ok;
+check_packet_size(Data, MaxPacketSize) ->
+    case packet_size(Data) of
+        {ok, PacketSize} when PacketSize =< MaxPacketSize ->
+            ok;
+        {ok, _PacketSize} ->
+            {error, packet_too_large};
+        incomplete ->
+            ok
+    end.
 
+packet_size(<<_PacketType:8, Rest/binary>>) ->
+    case remaining_length(Rest, 0, 1, 0) of
+        {ok, RemainingLength, LengthBytes} ->
+            {ok, 1 + LengthBytes + RemainingLength};
+        incomplete ->
+            incomplete
+    end;
+packet_size(<<>>) ->
+    incomplete.
+
+remaining_length(<<>>, _Value, _Multiplier, _Count) ->
+    incomplete;
+remaining_length(<<Byte:8, Rest/binary>>, Value, Multiplier, Count) ->
+    Value1 = Value + ((Byte band 16#7f) * Multiplier),
+    case Byte band 16#80 of
+        16#80 ->
+            remaining_length(Rest, Value1, Multiplier * 128, Count + 1);
+        0 ->
+            {ok, Value1, Count + 1}
+    end.
+
+maybe_send_packet_too_large(MsgBin, Options) ->
+    case mqtt_packet_map:decode(MsgBin) of
+        {ok, {#{ type := connect, protocol_version := 5 } = Packet, _Rest}} ->
+            mqtt_sessions_incoming:send_connack_error(?MQTT_RC_PACKET_TOO_LARGE, Packet, Options);
+        _ ->
+            ok
+    end.

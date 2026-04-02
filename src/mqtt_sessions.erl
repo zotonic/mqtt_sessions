@@ -396,12 +396,12 @@ set_runtime(Runtime) ->
 
 
 %% @doc Stream the connect message - connect a MQTT session or return an error
--spec incoming_connect( binary(), msg_options() ) -> {ok, {session_ref(), binary()}} | {error, incomplete_packet} | {error, term()}.
+-spec incoming_connect( binary(), msg_options() ) -> {ok, {session_ref(), binary()}} | {error, term()}.
 incoming_connect(MsgBin, Options) ->
     incoming_connect(undefined, MsgBin, Options).
 
 %% @doc Stream the connect message - connect a MQTT session or return an error
--spec incoming_connect( atom(), binary(), msg_options() ) -> {ok, {session_ref(), binary()}} | {error, incomplete_packet} | {error, term()}.
+-spec incoming_connect( atom(), binary(), msg_options() ) -> {ok, {session_ref(), binary()}} | {error, term()}.
 incoming_connect(Pool, MsgBin, Options) ->
     case mqtt_sessions_packet:check_packet_size(MsgBin, max_incoming_packet_size()) of
         ok ->
@@ -457,7 +457,7 @@ username_to_pool(_ConnectMsg) ->
 
 
 %% @doc Handle incoming data for session. Call this after a successful connect. The session will disconnect on an illegal packet.
--spec incoming_data( session_ref(), binary() ) -> ok | {error, wrong_connection | mqtt_packet_map:decode_error()}. 
+-spec incoming_data( session_ref(), binary() ) -> ok | {error, wrong_connection | packet_too_large | mqtt_packet_map:decode_error()}. 
 incoming_data(SessionRef, MsgBin) ->
     mqtt_sessions_process:incoming_data(SessionRef, MsgBin).
 

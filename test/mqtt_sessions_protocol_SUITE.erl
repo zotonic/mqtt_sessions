@@ -608,7 +608,7 @@ connect_max_incoming_packet_size_v5_test(_Config) ->
                     } = ConnAck,
                     mqtt_sessions_process:kill(SessionPid)
             after 1000 ->
-                ct:fail(connect_timeout)
+                fail(connect_timeout)
             end
         end).
 
@@ -640,13 +640,13 @@ connect_packet_too_large_v5_test(_Config) ->
                         reason_code := ?MQTT_RC_PACKET_TOO_LARGE
                     } = ConnAck
             after 1000 ->
-                ct:fail(connack_timeout)
+                fail(connack_timeout)
             end,
             receive
                 {mqtt_transport, _DisconnectPid, disconnect} ->
                     ok
             after 1000 ->
-                ct:fail(disconnect_timeout)
+                fail(disconnect_timeout)
             end
         end).
 
@@ -669,7 +669,7 @@ incoming_packet_too_large_v5_test(_Config) ->
                 {mqtt_transport, SessionPid, disconnect} ->
                     ok
             after 1000 ->
-                ct:fail(disconnect_timeout)
+                fail(disconnect_timeout)
             end,
             mqtt_sessions_process:kill(SessionPid)
         end).
@@ -695,7 +695,7 @@ outgoing_packet_too_large_v5_test(_Config) ->
             } = SubAck,
             ok
     after 1000 ->
-        ct:fail(suback_timeout)
+        fail(suback_timeout)
     end,
     Publish = #{
         type => publish,
@@ -708,7 +708,7 @@ outgoing_packet_too_large_v5_test(_Config) ->
         {mqtt_transport, SessionPid, disconnect} ->
             ok
     after 1000 ->
-        ct:fail(disconnect_timeout)
+        fail(disconnect_timeout)
     end,
     mqtt_sessions_process:kill(SessionPid).
 
@@ -738,7 +738,7 @@ incoming_messages_rate_limit_qos1_test(_Config) ->
                         reason_code := ?MQTT_RC_SUCCESS
                     } = Ack1
             after 1000 ->
-                ct:fail(puback_timeout)
+                fail(puback_timeout)
             end,
             Publish2 = Publish#{ packet_id => 11 },
             {ok, PublishMsg2} = mqtt_packet_map:encode(5, Publish2),
@@ -752,7 +752,7 @@ incoming_messages_rate_limit_qos1_test(_Config) ->
                         reason_code := ?MQTT_RC_QUOTA_EXCEEDED
                     } = Ack2
             after 1000 ->
-                ct:fail(puback_timeout)
+                fail(puback_timeout)
             end,
             mqtt_sessions_process:kill(SessionPid)
         end).
@@ -783,7 +783,7 @@ incoming_messages_burst_limit_qos1_test(_Config) ->
                         reason_code := ?MQTT_RC_SUCCESS
                     } = Ack1
             after 1000 ->
-                ct:fail(puback_timeout)
+                fail(puback_timeout)
             end,
             Publish2 = Publish1#{ packet_id => 21 },
             {ok, PublishMsg2} = mqtt_packet_map:encode(5, Publish2),
@@ -797,7 +797,7 @@ incoming_messages_burst_limit_qos1_test(_Config) ->
                         reason_code := ?MQTT_RC_SUCCESS
                     } = Ack2
             after 1000 ->
-                ct:fail(puback_timeout)
+                fail(puback_timeout)
             end,
             Publish3 = Publish1#{ packet_id => 22 },
             {ok, PublishMsg3} = mqtt_packet_map:encode(5, Publish3),
@@ -811,7 +811,7 @@ incoming_messages_burst_limit_qos1_test(_Config) ->
                         reason_code := ?MQTT_RC_QUOTA_EXCEEDED
                     } = Ack3
             after 1000 ->
-                ct:fail(puback_timeout)
+                fail(puback_timeout)
             end,
             mqtt_sessions_process:kill(SessionPid)
         end).
@@ -838,7 +838,7 @@ incoming_messages_rate_limit_qos0_test(_Config) ->
                         acks := [ {ok, 0} ]
                     } = SubAck
             after 1000 ->
-                ct:fail(suback_timeout)
+                fail(suback_timeout)
             end,
             Publish = #{
                 type => publish,
@@ -856,13 +856,13 @@ incoming_messages_rate_limit_qos0_test(_Config) ->
                         payload := <<"hello">>
                     } = PubMsgReceived
             after 1000 ->
-                ct:fail(publish_timeout)
+                fail(publish_timeout)
             end,
             ok = mqtt_sessions:incoming_data(SessionPid, PublishMsg),
             receive
                 {mqtt_transport, SessionPid, UnexpectedBin} when is_binary(UnexpectedBin) ->
                     {ok, {Unexpected, <<>>}} = mqtt_packet_map:decode(UnexpectedBin),
-                    ct:fail({unexpected_message, Unexpected})
+                    fail({unexpected_message, Unexpected})
             after 200 ->
                 ok
             end,
@@ -935,7 +935,7 @@ connect_session(ClientId, Options, ConnectProps) ->
             #{ type := connack, reason_code := 0 } = ConnAck,
             SessionPid
     after 1000 ->
-        ct:fail(connect_timeout)
+        fail(connect_timeout)
     end.
 
 disconnect_session(SessionPid, SessionExpiryInterval) ->
@@ -952,8 +952,11 @@ disconnect_session(SessionPid, SessionExpiryInterval) ->
         {mqtt_transport, SessionPid, disconnect} ->
             ok
     after 1000 ->
-        ct:fail(disconnect_timeout)
+        fail(disconnect_timeout)
     end.
+
+fail(Reason) ->
+    erlang:error({test_case_failed, Reason}).
 
 assert_disconnect_timer(SessionPid, ExpectedSeconds) ->
     WillPid = element(18, sys:get_state(SessionPid)),

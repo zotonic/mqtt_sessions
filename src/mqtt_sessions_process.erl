@@ -225,7 +225,7 @@ kill(Pid) when is_pid(Pid) ->
 incoming_connect(Pid, Msg, Options) when is_map(Options) ->
     gen_server:cast(Pid, {incoming_connect, Msg, Options}).
 
--spec incoming_data(pid(), binary()) -> ok | {error, wrong_connection | mqtt_packet_map:decode_error()}. 
+-spec incoming_data(pid(), binary()) -> ok | {error, wrong_connection | packet_too_large | mqtt_packet_map:decode_error()}. 
 incoming_data(Pid, Data) ->
     gen_server:call(Pid, {incoming_data, Data, self()}).
 
@@ -1351,13 +1351,9 @@ effective_max_outgoing_packet_size(#state{
     }) ->
     erlang:min(MaxOutgoingPacketSize, PeerMaxPacketSize).
 
-incoming_messages_capacity(undefined, _Burst) ->
-    0.0;
 incoming_messages_capacity(Rate, Burst) ->
     1.0 * (Rate + Burst).
 
-check_incoming_publish_quota(#state{ max_incoming_messages_rate = undefined } = State) ->
-    {allow, State};
 check_incoming_publish_quota(#state{
         max_incoming_messages_rate = Rate,
         max_incoming_messages_burst = Burst,

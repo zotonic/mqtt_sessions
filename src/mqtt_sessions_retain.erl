@@ -200,25 +200,21 @@ do_cleanup(Topics, Messages, Eviction) ->
         TRefs).
 
 maybe_enforce_memory_limit(#state{ pool = Pool, topics = Topics, messages = Messages, eviction = Eviction }) ->
-    case max_retained_memory() of
-        undefined ->
-            ok;
-        MaxBytes ->
-            do_cleanup(Topics, Messages, Eviction),
-            Evicted = evict_until_within_limit(Topics, Messages, Eviction, MaxBytes),
-            case Evicted > 0 of
-                true ->
-                    ?LOG_INFO(#{
-                        in => mqtt_sessions,
-                        text => <<"Evicted retained MQTT messages due to memory limit">>,
-                        pool => Pool,
-                        evicted_count => Evicted,
-                        max_retained_memory => MaxBytes,
-                        retained_memory => retained_memory_bytes(Topics, Messages, Eviction)
-                    });
-                false ->
-                    ok
-            end
+    MaxBytes = max_retained_memory(),
+    do_cleanup(Topics, Messages, Eviction),
+    Evicted = evict_until_within_limit(Topics, Messages, Eviction, MaxBytes),
+    case Evicted > 0 of
+        true ->
+            ?LOG_INFO(#{
+                in => mqtt_sessions,
+                text => <<"Evicted retained MQTT messages due to memory limit">>,
+                pool => Pool,
+                evicted_count => Evicted,
+                max_retained_memory => MaxBytes,
+                retained_memory => retained_memory_bytes(Topics, Messages, Eviction)
+            });
+        false ->
+            ok
     end.
 
 evict_until_within_limit(Topics, Messages, Eviction, MaxBytes) ->
